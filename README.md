@@ -40,9 +40,9 @@ npx tsx scripts/sch-user.ts   # 회로도 배치/배선 품질 측정
 
 | 플랫폼 | 명령 | 결과 |
 |---|---|---|
-| macOS (Apple Silicon + Intel) | `npm run dist:mac` | `release/ezBoard-1.0.0-mac-arm64.dmg`, `-mac-x64.dmg` |
-| Windows x64 | `npm run dist:win` | `release/ezBoard-1.0.0-windows-x64-setup.exe` |
-| Linux x64 | `npm run dist:linux` | `release/ezBoard-1.0.0-linux-x86_64.AppImage`, `-linux-amd64.deb` |
+| macOS (Apple Silicon + Intel) | `npm run dist:mac` | `release/ezBoard-<버전>-mac-arm64.dmg`, `-mac-x64.dmg` |
+| Windows x64 | `npm run dist:win` | `release/ezBoard-<버전>-windows-x64-setup.exe` |
+| Linux x64 | `npm run dist:linux` | `release/ezBoard-<버전>-linux-x86_64.AppImage`, `-linux-amd64.deb` |
 | Android | `npm run android:apk` | `android/app/build/outputs/apk/release/app-release.apk` (+ `bundle/release/app-release.aab`) |
 
 - 데스크톱은 Electron, 안드로이드는 Capacitor로 같은 웹 앱을 감쌉니다. 모두 이 Mac에서 빌드됩니다.

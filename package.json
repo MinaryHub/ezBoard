@@ -1,7 +1,7 @@
 {
   "name": "ezboard",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -19,7 +19,6 @@
     "android:apk": "npm run android:sync && cd android && ./gradlew assembleRelease",
     "screenshots": "npm run build && electron scripts/screenshots.cjs"
   },
-  "dependencies": {},
   "devDependencies": {
     "@capacitor/android": "^8.6.2",
     "@capacitor/cli": "^8.6.2",
