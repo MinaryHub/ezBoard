@@ -41,7 +41,8 @@ export default function PcbCanvas() {
     const w = Math.max(bw, bh * aspect), h = w / aspect;
     setVb({ x: board.width / 2 - w / 2, y: board.height / 2 - h / 2, w, h });
   };
-  useEffect(fit, [board.width, board.height]);
+  const fitTick = useStore((s) => s.fitTick);
+  useEffect(fit, [board.width, board.height, fitTick]); // eslint-disable-line react-hooks/exhaustive-deps
   useRefitOnShow(svgRef, fit);
 
   // 키보드 단축키
@@ -200,7 +201,7 @@ export default function PcbCanvas() {
             onDoubleClick={(e) => { e.stopPropagation(); rotatePart(part.ref); }}
           >
             <rect x={box.x1} y={box.y1} width={box.x2 - box.x1} height={box.y2 - box.y1}
-              fill={isSel ? '#ffffff14' : 'transparent'} stroke={isSel ? '#7dd3fc' : 'none'} strokeWidth={0.2} strokeDasharray={isSel ? '0.6 0.4' : undefined} />
+              fill={isSel ? 'rgba(255,158,41,0.10)' : 'transparent'} stroke={isSel ? '#ff9e29' : 'none'} strokeWidth={0.2} strokeDasharray={isSel ? '0.6 0.4' : undefined} />
             {show.silk && def?.footprint.silk.map((s, i) => {
               if (s.kind === 'line') {
                 const [x1, y1] = rotatePoint(s.x1, s.y1, part.rot);

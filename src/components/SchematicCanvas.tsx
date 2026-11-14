@@ -11,8 +11,9 @@ import type { SchPos } from '../types';
 
 const INK = '#2b2f36';
 const WIRE = '#14804a';
-const HILITE = '#ea580c';
-const SEL = '#2563eb';
+// 선택 = 강조색(밝은 바탕용 진한 주황), 연결 강조 = 정보색 파랑
+const HILITE = '#266fc9';
+const SEL = '#c46a00';
 const DIRV: Record<Dir, [number, number]> = { l: [-1, 0], r: [1, 0], u: [0, -1], d: [0, 1] };
 
 /** 전원/접지 기호 */
@@ -82,7 +83,8 @@ export default function SchematicCanvas() {
   };
   // 부품 구성이 바뀌면 화면 맞추기
   const partKey = project.parts.map((p) => p.ref).join(',');
-  useEffect(fit, [partKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const fitTick = useStore((s) => s.fitTick);
+  useEffect(fit, [partKey, fitTick]); // eslint-disable-line react-hooks/exhaustive-deps
   useRefitOnShow(svgRef, fit);
 
   useEffect(() => {
@@ -219,7 +221,7 @@ export default function SchematicCanvas() {
             onDoubleClick={(e) => { e.stopPropagation(); rotateSchPart(part.ref); }}
           >
             <rect x={body.x1 - 0.6} y={body.y1 - 0.6} width={body.x2 - body.x1 + 1.2} height={body.y2 - body.y1 + 1.2}
-              fill={isSel ? '#2563eb12' : 'transparent'} stroke={isSel ? SEL : 'none'} strokeWidth={0.1} strokeDasharray="0.5 0.3" rx={0.4} />
+              fill={isSel ? 'rgba(255,158,41,0.12)' : 'transparent'} stroke={isSel ? SEL : 'none'} strokeWidth={0.1} strokeDasharray="0.5 0.3" rx={0.4} />
             <g transform={`translate(${p.x} ${p.y}) ${sym.rotatable ? `rotate(${p.rot})` : p.rot === 180 ? 'scale(-1 1)' : ''}`} stroke={color} strokeWidth={0.15} strokeLinecap="round" strokeLinejoin="round" fill="none">
               {sym.shapes.map((s, i) => {
                 if (s.k === 'path') return <path key={i} d={s.d} fill={s.fill ? color : 'none'} />;

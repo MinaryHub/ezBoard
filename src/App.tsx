@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from './store';
 import PcbCanvas from './components/PcbCanvas';
 import SchematicCanvas from './components/SchematicCanvas';
@@ -6,10 +6,13 @@ import ChatPanel from './components/ChatPanel';
 import SidePanel, { type Tab } from './components/SidePanel';
 import SettingsModal from './components/SettingsModal';
 import Tooltip from './components/Tooltip';
+import Icon, { type IconName } from './components/Icon';
 import { runDrc, unroutedCount } from './lib/drc';
 import type { Project } from './types';
 import { saveFile } from './lib/platform';
 import { useLang, useT, type TKey } from './i18n';
+
+type StepKey = 'circuit' | 'place' | 'route' | 'check' | 'order';
 
 export default function App() {
   const project = useStore((s) => s.project);
@@ -17,6 +20,7 @@ export default function App() {
   const stage = useStore((s) => s.stage);
   const show = useStore((s) => s.showLayer);
   const toast = useStore((s) => s.toast);
+  const appearance = useStore((s) => s.appearance);
   const past = useStore((s) => s.past.length);
   const future = useStore((s) => s.future.length);
   const st = useStore.getState();
@@ -27,14 +31,19 @@ export default function App() {
   // 휴대폰 화면에서는 한 번에 한 영역만 보여준다
   const [pane, setPane] = useState<'chat' | 'stage' | 'side'>('chat');
   const fileRef = useRef<HTMLInputElement>(null);
+  const [lastMsg, setLastMsg] = useState('');
 
+  useEffect(() => { document.documentElement.dataset.appearance = appearance; }, [appearance]);
+  useEffect(() => { if (toast) setLastMsg(toast); }, [toast]);
+
+  const issues = useMemo(() => runDrc(project), [project, lang]); // eslint-disable-line react-hooks/exhaustive-deps
   const status = useMemo(() => {
-    const issues = runDrc(project);
     const placeOk = project.parts.length > 0 && !issues.some((i) => i.code === 'overlap' || i.code === 'offboard');
     const routeOk = placeOk && project.tracks.length > 0 && unroutedCount(project) === 0;
     const checkOk = routeOk && !issues.some((i) => i.level === 'error');
     return { circuit: project.parts.length > 0, place: placeOk, route: routeOk, check: checkOk };
-  }, [project]);
+  }, [project, issues]);
+  const errorCount = issues.filter((i) => i.level === 'error').length;
 
   const runRoute = () => {
     if (!project.nets.length) { st.notify(t('toast.noNets')); return; }
@@ -42,7 +51,7 @@ export default function App() {
     st.notify(r.failed.length ? t('toast.routeFail', { n: r.failed.length }) : t('toast.routeOk'));
   };
 
-  const steps: { key: 'circuit' | 'place' | 'route' | 'check' | 'order'; done: boolean; action: () => void }[] = [
+  const steps: { key: StepKey; done: boolean; action: () => void }[] = [
     { key: 'circuit', done: status.circuit, action: () => { st.setStage('sch'); setPane('stage'); } },
     { key: 'place', done: status.place, action: () => { st.setStage('pcb'); setTab('part'); setPane('stage'); } },
     { key: 'route', done: status.route, action: () => { st.setStage('pcb'); setPane('stage'); runRoute(); } },
@@ -66,73 +75,116 @@ export default function App() {
     }
   };
 
-  const layer = (k: 'top' | 'bottom' | 'silk' | 'ratsnest', cls: string, label: TKey, tip: TKey) => (
-    <label className={`layer ${cls} ${show[k] ? 'on' : ''}`} data-tip={t(tip)}>
-      <input type="checkbox" checked={show[k]} onChange={() => st.toggleLayer(k)} />{t(label)}
-    </label>
+  /** 리본 버튼: 아이콘 위, 글자 아래 */
+  const R = ({ icon, label, tip, onClick, engaged, disabled, primary }: { icon: IconName; label: TKey; tip: TKey; onClick: () => void; engaged?: boolean; disabled?: boolean; primary?: boolean }) => (
+    <button className={`rbtn ${engaged ? 'engaged' : ''} ${primary ? 'engaged' : ''}`} onClick={onClick} disabled={disabled} data-tip={t(tip)}>
+      <Icon name={icon} />{t(label)}
+    </button>
+  );
+  const L = ({ k, color, label, tip }: { k: 'top' | 'bottom' | 'silk' | 'ratsnest'; color: string; label: TKey; tip: TKey }) => (
+    <button className={`rbtn ${show[k] ? '' : 'off'}`} onClick={() => st.toggleLayer(k)} data-tip={t(tip)} aria-pressed={show[k]}>
+      <span className="swatch" style={{ color }}><i style={{ background: show[k] ? color : 'transparent' }} /></span>{t(label)}
+    </button>
   );
 
+  const realView = view === 'real';
   return (
     <div className="app">
-      <header className="top">
-        <div className="brand"><img src="./logo-mark.svg" alt="" />ez<span>Board</span></div>
-        <input className="project-name" value={project.name} onChange={(e) => st.setName(e.target.value)} data-tip={t('tip.name')} />
-        <div className="steps">
+      {/* ── 메뉴 막대 ── */}
+      <header className="menubar">
+        <div className="brand"><img src="./logo-mark.svg" alt="" /><span className="name">ezBoard</span></div>
+        <button className="ghost mi" onClick={() => { if (!project.parts.length || confirm(t('top.confirmNew'))) st.newProject(); }} data-tip={t('tip.new')}><Icon name="new" size={16} /><span className="lbl">{t('top.new')}</span></button>
+        <button className="ghost mi" onClick={() => fileRef.current?.click()} data-tip={t('tip.open')}><Icon name="open" size={16} /><span className="lbl">{t('top.open')}</span></button>
+        <button className="ghost mi" onClick={saveProject} data-tip={t('tip.save')}><Icon name="save" size={16} /><span className="lbl">{t('top.save')}</span></button>
+        <button className="ghost" onClick={st.undo} disabled={!past} data-tip={t('tip.undo')}><Icon name="undo" size={15} /></button>
+        <button className="ghost" onClick={st.redo} disabled={!future} data-tip={t('tip.redo')}><Icon name="redo" size={15} /></button>
+        <div className="doc-tab" data-tip={t('tip.name')}>
+          <input value={project.name} onChange={(e) => st.setName(e.target.value)} aria-label="project name" />
+          {past > 0 && <span className="dirty" />}
+        </div>
+        <div className="spacer" />
+        <button className="ghost" onClick={() => setLang(lang === 'ko' ? 'en' : 'ko')} data-tip={t('tip.lang')}><Icon name="globe" size={15} /><span className="lbl">{lang === 'ko' ? 'EN' : '한국어'}</span></button>
+        <button className="ghost" onClick={() => setSettingsOpen(true)} data-tip={t('tip.settings')}><Icon name="settings" size={15} /></button>
+        <input ref={fileRef} type="file" accept=".json" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) openFile(f); e.target.value = ''; }} />
+      </header>
+
+      {/* ── 리본: 작업 단계 탭 + 도구 묶음 ── */}
+      <div className="ribbon">
+        <nav className="ribbon-tabs">
           {steps.map((s, i) => (
-            <button key={s.key} className={`step ${s.done ? 'done' : ''} ${i === current ? 'current' : ''}`} onClick={s.action} data-tip={t(`tip.step.${s.key}` as TKey)}>
-              <span className="num">{s.done ? '✓' : i + 1}</span>{t(`step.${s.key}` as TKey)}
+            <button key={s.key} className={`rtab ${s.done ? 'done' : ''} ${i === current ? 'current' : ''}`} onClick={s.action} data-tip={t(`tip.step.${s.key}` as TKey)}>
+              <span className="n">{s.done ? '✓' : i + 1}</span>{t(`step.${s.key}` as TKey)}
             </button>
           ))}
+        </nav>
+        <div className="ribbon-tools">
+          <div className="rgroup">
+            <div className="rgroup-items">
+              {R({ icon: 'schematic', label: 'rb.sch', tip: 'tip.sch', engaged: stage === 'sch', onClick: () => st.setStage('sch') })}
+              {R({ icon: 'pcb', label: 'rb.pcb', tip: 'tip.pcb', engaged: stage === 'pcb', onClick: () => st.setStage('pcb') })}
+              {R({ icon: 'fit', label: 'rb.fit', tip: 'tip.fit', onClick: st.requestFit, disabled: !project.parts.length })}
+            </div>
+            <div className="rgroup-cap">{t('rib.view')}</div>
+          </div>
+          {stage === 'sch' ? (
+            <>
+              <div className="rgroup">
+                <div className="rgroup-items">
+                  {R({ icon: 'tidy', label: 'rb.tidy', tip: 'tip.tidy', disabled: !project.parts.length, onClick: () => { st.relayoutSchematic(); st.notify(t('toast.tidy')); } })}
+                </div>
+                <div className="rgroup-cap">{t('rib.tools')}</div>
+              </div>
+              <div className="rhint">{t('tb.schHint')}</div>
+            </>
+          ) : (
+            <>
+              <div className="rgroup">
+                <div className="rgroup-items">
+                  {R({ icon: 'place', label: 'rb.autoPlace', tip: 'tip.autoPlace', disabled: !project.parts.length, onClick: () => { st.runAutoPlace(); st.notify(t('toast.placed')); } })}
+                  {R({ icon: 'route', label: 'rb.autoRoute', tip: 'tip.autoRoute', disabled: !project.nets.length, onClick: runRoute, primary: !status.route && project.nets.length > 0 })}
+                  {R({ icon: 'clear', label: 'rb.clear', tip: 'tip.clearRoutes', disabled: !project.tracks.length, onClick: st.clearRoutes })}
+                </div>
+                <div className="rgroup-cap">{t('rib.tools')}</div>
+              </div>
+              <div className="rgroup">
+                <div className="rgroup-items">
+                  {R({ icon: 'edit', label: 'rb.edit', tip: 'tip.editView', engaged: !realView, onClick: () => st.setView('edit') })}
+                  {R({ icon: 'real', label: 'rb.real', tip: 'tip.realView', engaged: realView, onClick: () => st.setView('real') })}
+                </div>
+                <div className="rgroup-cap">{t('rib.display')}</div>
+              </div>
+              <div className="rgroup">
+                <div className="rgroup-items">
+                  {L({ k: 'top', color: '#d9483b', label: 'tb.top', tip: 'tip.top' })}
+                  {L({ k: 'bottom', color: '#3b7dd9', label: 'tb.bottom', tip: 'tip.bottom' })}
+                  {L({ k: 'silk', color: '#c9ccd2', label: 'tb.silk', tip: 'tip.silk' })}
+                  {L({ k: 'ratsnest', color: '#facc15', label: 'tb.rats', tip: 'tip.rats' })}
+                </div>
+                <div className="rgroup-cap">{t('rib.layers')}</div>
+              </div>
+            </>
+          )}
         </div>
-        <div className="top-actions">
-          <button className="ghost" onClick={() => { if (!project.parts.length || confirm(t('top.confirmNew'))) st.newProject(); }} data-tip={t('tip.new')}>{t('top.new')}</button>
-          <button className="ghost" onClick={() => fileRef.current?.click()} data-tip={t('tip.open')}>{t('top.open')}</button>
-          <button className="ghost" onClick={saveProject} data-tip={t('tip.save')}>{t('top.save')}</button>
-          <button className="ghost" onClick={st.undo} disabled={!past} data-tip={t('tip.undo')}>↶</button>
-          <button className="ghost" onClick={st.redo} disabled={!future} data-tip={t('tip.redo')}>↷</button>
-          <button className="ghost lang-btn" onClick={() => setLang(lang === 'ko' ? 'en' : 'ko')} data-tip={t('tip.lang')}>{lang === 'ko' ? 'EN' : '한'}</button>
-          <button className="ghost" onClick={() => setSettingsOpen(true)} data-tip={t('tip.settings')}>⚙️</button>
-          <input ref={fileRef} type="file" accept=".json" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) openFile(f); e.target.value = ''; }} />
-        </div>
-      </header>
+      </div>
 
       <main className={`main pane-${pane}`}>
         <ChatPanel onOpenSettings={() => setSettingsOpen(true)} onCircuit={() => setPane('stage')} />
         <section className="stage">
-          <div className="toolbar">
-            <div className="seg stage-switch">
-              <button className={stage === 'sch' ? 'active' : ''} onClick={() => st.setStage('sch')} data-tip={t('tip.sch')}>{t('tb.sch')}</button>
-              <button className={stage === 'pcb' ? 'active' : ''} onClick={() => st.setStage('pcb')} data-tip={t('tip.pcb')}>{t('tb.pcb')}</button>
-            </div>
-            <div className="sep" />
-            {stage === 'sch' ? (
-              <>
-                <button onClick={() => { st.relayoutSchematic(); st.notify(t('toast.tidy')); }} disabled={!project.parts.length} data-tip={t('tip.tidy')}>{t('tb.tidy')}</button>
-                <span className="toolbar-hint">{t('tb.schHint')}</span>
-              </>
-            ) : (
-              <>
-                <button onClick={() => { st.runAutoPlace(); st.notify(t('toast.placed')); }} disabled={!project.parts.length} data-tip={t('tip.autoPlace')}>{t('tb.autoPlace')}</button>
-                <button className="primary" onClick={runRoute} disabled={!project.nets.length} data-tip={t('tip.autoRoute')}>{t('tb.autoRoute')}</button>
-                <button onClick={st.clearRoutes} disabled={!project.tracks.length} data-tip={t('tip.clearRoutes')}>{t('tb.clearRoutes')}</button>
-                <div className="sep" />
-                <div className="seg">
-                  <button className={view === 'edit' ? 'active' : ''} onClick={() => st.setView('edit')} data-tip={t('tip.editView')}>{t('tb.editView')}</button>
-                  <button className={view === 'real' ? 'active' : ''} onClick={() => st.setView('real')} data-tip={t('tip.realView')}>{t('tb.realView')}</button>
-                </div>
-                <div className="sep" />
-                {layer('top', 'top', 'tb.top', 'tip.top')}
-                {layer('bottom', 'bottom', 'tb.bottom', 'tip.bottom')}
-                {layer('silk', 'silk', 'tb.silk', 'tip.silk')}
-                {layer('ratsnest', 'rats', 'tb.rats', 'tip.rats')}
-              </>
-            )}
-          </div>
           <div className={`canvas-wrap ${stage === 'sch' ? 'paper' : ''}`}>
             {stage === 'sch' ? <SchematicCanvas /> : <PcbCanvas />}
+            {project.parts.length > 0 && (
+              <div className="vp-overlay">
+                <div className="l1">{stage === 'sch' ? t('vp.sch') : realView ? t('vp.pcbReal') : t('vp.pcbEdit')}</div>
+                <div className="l2">
+                  {stage === 'sch'
+                    ? t('vp.schInfo', { parts: project.parts.length, nets: project.nets.length })
+                    : t('vp.pcbInfo', { w: project.board.width, h: project.board.height, vias: project.vias.length })}
+                </div>
+              </div>
+            )}
             {!project.parts.length && (
               <div className="canvas-empty">
-                <div className="big">🛠️</div>
+                <div className="big"><Icon name={stage === 'sch' ? 'schematic' : 'pcb'} size={40} /></div>
                 <div>{t('canvas.empty1')}</div>
                 <div className="muted">{t('canvas.empty2')}</div>
               </div>
@@ -153,13 +205,32 @@ export default function App() {
             )}
           </div>
         </section>
-        <SidePanel tab={tab} setTab={setTab} />
+        <SidePanel tab={tab} setTab={setTab} errorCount={errorCount} />
         <nav className="mobile-nav">
-          <button className={pane === 'chat' ? 'active' : ''} onClick={() => setPane('chat')}><span>💬</span>{t('nav.chat')}</button>
-          <button className={pane === 'stage' ? 'active' : ''} onClick={() => setPane('stage')}><span>{stage === 'sch' ? '📐' : '🟩'}</span>{stage === 'sch' ? t('nav.sch') : t('nav.pcb')}</button>
-          <button className={pane === 'side' ? 'active' : ''} onClick={() => setPane('side')}><span>📋</span>{t('nav.side')}</button>
+          <button className={pane === 'chat' ? 'active' : ''} onClick={() => setPane('chat')}><Icon name="chat" size={20} />{t('nav.chat')}</button>
+          <button className={pane === 'stage' ? 'active' : ''} onClick={() => setPane('stage')}><Icon name={stage === 'sch' ? 'schematic' : 'pcb'} size={20} />{stage === 'sch' ? t('nav.sch') : t('nav.pcb')}</button>
+          <button className={pane === 'side' ? 'active' : ''} onClick={() => setPane('side')}><Icon name="part" size={20} />{t('nav.side')}</button>
         </nav>
       </main>
+
+      {/* ── 상태 막대 ── */}
+      <footer className="statusbar">
+        <span className={`mode-chip ${stage}`}>{stage === 'sch' ? t('rb.sch') : t('rb.pcb')}</span>
+        <span className="keys">
+          <span><kbd>R</kbd>{t('sb.rotate')}</span>
+          <span><kbd>Del</kbd>{t('sb.delete')}</span>
+          <span><kbd>{t('sb.wheel')}</kbd>{t('sb.zoom')}</span>
+          <span><kbd>{t('sb.drag')}</kbd>{t('sb.pan')}</span>
+        </span>
+        <span className="status-msg">{lastMsg || t('sb.ready')}</span>
+        {project.parts.length > 0 && (
+          <span className="status-sum">
+            <span>{t('sb.parts', { n: project.parts.length })}</span>
+            <span className="num">{project.board.width}×{project.board.height} mm</span>
+            {errorCount ? <span className="bad">{t('sb.errors', { n: errorCount })}</span> : <span className="ok">{t('sb.ok')}</span>}
+          </span>
+        )}
+      </footer>
 
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
       {toast && <div className="toast">{toast}</div>}

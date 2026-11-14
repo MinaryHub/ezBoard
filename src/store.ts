@@ -29,6 +29,7 @@ const defaultSettings: AiSettings = {
 
 export type ViewMode = 'edit' | 'real';
 export type Stage = 'sch' | 'pcb';
+export type Appearance = 'dark' | 'light';
 
 interface State {
   project: Project;
@@ -39,6 +40,8 @@ interface State {
   settings: AiSettings;
   view: ViewMode;
   stage: Stage;
+  appearance: Appearance;
+  fitTick: number;
   showLayer: { top: boolean; bottom: boolean; silk: boolean; ratsnest: boolean };
   lastRoute: RouteResult | null;
   toast: string | null;
@@ -65,6 +68,8 @@ interface State {
   setSettings: (s: AiSettings) => void;
   setView: (v: ViewMode) => void;
   setStage: (s: Stage) => void;
+  setAppearance: (a: Appearance) => void;
+  requestFit: () => void;
   moveSchPart: (ref: string, x: number, y: number, current: Record<string, SchPos>) => void;
   rotateSchPart: (ref: string) => void;
   relayoutSchematic: () => void;
@@ -89,6 +94,8 @@ export const useStore = create<State>((set, get) => ({
   settings: load('ezboard.settings', defaultSettings),
   view: 'edit',
   stage: 'sch',
+  appearance: (() => { try { return localStorage.getItem('ezboard.appearance') === 'light' ? 'light' : 'dark'; } catch { return 'dark'; } })(),
+  fitTick: 0,
   showLayer: { top: true, bottom: true, silk: true, ratsnest: true },
   lastRoute: null,
   toast: null,
@@ -176,6 +183,8 @@ export const useStore = create<State>((set, get) => ({
   setSettings: (settings) => { save('ezboard.settings', settings); set({ settings }); },
   setView: (view) => set({ view }),
   setStage: (stage) => set({ stage }),
+  setAppearance: (appearance) => { try { localStorage.setItem('ezboard.appearance', appearance); } catch { /* 무시 */ } set({ appearance }); },
+  requestFit: () => set((s) => ({ fitTick: s.fitTick + 1 })),
   moveSchPart: (ref, x, y, current) => {
     const s = get();
     const old = current[ref];

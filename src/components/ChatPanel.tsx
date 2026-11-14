@@ -4,6 +4,7 @@ import { askAi, PROVIDERS } from '../lib/ai';
 import { getExamples } from '../lib/examples';
 import { useLang, useT, type TKey } from '../i18n';
 import type { Provider } from '../types';
+import Icon from './Icon';
 
 function escapeHtml(s: string) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -98,14 +99,15 @@ export default function ChatPanel({ onOpenSettings, onCircuit }: { onOpenSetting
 
   return (
     <aside className="chat">
-      <div className="chat-head">
-        <div className="chat-title">{t('chat.title')}</div>
+      <div className="area-head">
+        <div className="area-title"><Icon name="chat" size={14} />{t('area.chat')}</div>
+        <div className="spacer" />
         <select value={settings.provider} onChange={(e) => setSettings({ ...settings, provider: e.target.value as Provider })} data-tip={t('tip.provider')}>
           {(Object.keys(PROVIDERS) as Provider[]).map((p) => (
             <option key={p} value={p}>{PROVIDERS[p].short}{settings.keys[p] ? '' : t('chat.noKey')}</option>
           ))}
         </select>
-        {messages.length > 0 && <button className="ghost small" onClick={clearChat} data-tip={t('tip.clearChat')}>🗑</button>}
+        {messages.length > 0 && <button className="ghost small" onClick={clearChat} data-tip={t('tip.clearChat')} aria-label="clear"><Icon name="trash" size={14} /></button>}
       </div>
 
       <div className="chat-list" ref={listRef}>
@@ -113,7 +115,7 @@ export default function ChatPanel({ onOpenSettings, onCircuit }: { onOpenSetting
           <div className="welcome">
             <h3>{t('chat.welcome')}</h3>
             <p>{t('chat.welcomeText')}</p>
-            {!hasKey && <button className="primary block" onClick={onOpenSettings} data-tip={t('tip.settings')}>{t('chat.connect')}</button>}
+            {!hasKey && <button className="primary block" onClick={onOpenSettings} data-tip={t('tip.settings')}><Icon name="key" size={15} />{t('chat.connect').replace('🔑 ', '')}</button>}
             <div className="section-label">{t('chat.tryExamples')}</div>
             {examples.map((ex, i) => (
               <button key={ex.title} className="example" onClick={() => loadExample(i)} data-tip={t('tip.example')}>
@@ -153,7 +155,7 @@ export default function ChatPanel({ onOpenSettings, onCircuit }: { onOpenSetting
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(input); } }}
           rows={2}
         />
-        <button className="primary" type="submit" disabled={busy || !input.trim()} data-tip={t('tip.send')}>{t('chat.send')}</button>
+        <button className={input.trim() ? 'has-text' : ''} type="submit" disabled={busy || !input.trim()} data-tip={t('tip.send')} aria-label={t('chat.send')}><Icon name="send" size={15} /></button>
       </form>
     </aside>
   );

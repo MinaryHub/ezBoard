@@ -3,11 +3,14 @@ import { useStore } from '../store';
 import { listModels, PROVIDERS } from '../lib/ai';
 import { useLang, useT } from '../i18n';
 import type { Provider } from '../types';
+import Icon from './Icon';
 
 export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const settings = useStore((s) => s.settings);
   const setSettings = useStore((s) => s.setSettings);
   const { lang, setLang } = useLang();
+  const appearance = useStore((s) => s.appearance);
+  const setAppearance = useStore((s) => s.setAppearance);
   const t = useT();
   const [draft, setDraft] = useState(settings);
   const [models, setModels] = useState<Partial<Record<Provider, string[]>>>({});
@@ -29,13 +32,20 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   return (
     <div className="modal-bg" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2>{t('set.title')}</h2>
+        <h2><Icon name="settings" size={16} />{t('set.title').replace('⚙️ ', '')}</h2>
         <p className="muted" dangerouslySetInnerHTML={{ __html: t('set.desc') }} />
-        <div className="row">
-          <span className="muted small">{t('set.language')}</span>
+        <div className="set-row">
+          <span className="muted">{t('set.language')}</span>
           <div className="seg">
             <button className={lang === 'ko' ? 'active' : ''} onClick={() => setLang('ko')}>한국어</button>
             <button className={lang === 'en' ? 'active' : ''} onClick={() => setLang('en')}>English</button>
+          </div>
+        </div>
+        <div className="set-row" data-tip={t('tip.appearance')}>
+          <span className="muted">{t('set.appearance')}</span>
+          <div className="seg">
+            <button className={appearance === 'dark' ? 'active' : ''} onClick={() => setAppearance('dark')}><Icon name="moon" size={14} />{t('set.dark')}</button>
+            <button className={appearance === 'light' ? 'active' : ''} onClick={() => setAppearance('light')}><Icon name="sun" size={14} />{t('set.light')}</button>
           </div>
         </div>
         {(Object.keys(PROVIDERS) as Provider[]).map((p) => (

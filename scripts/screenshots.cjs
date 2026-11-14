@@ -110,7 +110,7 @@ async function loadExampleWithChat(win, idx, msgs) {
 }
 
 const L = {
-  ko: { autoRoute: '자동 배선', pcb: 'PCB', real: '실물 보기', order: '주문', check: '검사', sch: '회로도', side: '부품·주문', chat: 'AI 대화' },
+  ko: { autoRoute: '자동 배선', pcb: 'PCB', real: '실물', order: '주문', check: '검사', sch: '회로도', side: '부품·주문', chat: 'AI 대화' },
   en: { autoRoute: 'Auto route', pcb: 'PCB', real: 'Realistic', order: 'Order', check: 'Check', sch: 'Schematic', side: 'Parts & order', chat: 'AI chat' },
 };
 
@@ -125,14 +125,14 @@ async function desktop(cfg) {
     await loadExampleWithChat(win, 1, CHAT[lang].blink);
     await shot(win, path.join(dir, '02-ai-schematic.png'));
     // 3. PCB 편집 + 기능 설명 풍선
-    await js(win, clickText('.stage-switch button', L[lang].pcb));
-    await js(win, click('.tabs button', 3));
-    await js(win, hover('.toolbar button', L[lang].autoRoute));
+    await js(win, clickText('.rbtn', L[lang].pcb));
+    await js(win, click('.vtabs button', 3));
+    await js(win, hover('.rbtn', L[lang].autoRoute));
     await shot(win, path.join(dir, '03-pcb-tooltip.png'));
     // 4. 실물 보기 + 주문 파일
     await js(win, `document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));`);
-    await js(win, clickText('.seg button', L[lang].real));
-    await js(win, click('.tabs button', 4));
+    await js(win, clickText('.rbtn', L[lang].real));
+    await js(win, click('.vtabs button', 4));
     await shot(win, path.join(dir, '04-realistic-order.png'));
     // 5. 아두이노 예제 회로도
     await js(win, `window.confirm = () => true;` + click('.top-actions button', 0));
@@ -151,12 +151,12 @@ async function phone(cfg) {
     await loadExampleWithChat(win, 1, CHAT[lang].blink);
     await js(win, clickText('.mobile-nav button', L[lang].sch));
     await shot(win, path.join(dir, '02-schematic.png'));
-    await js(win, clickText('.stage-switch button', L[lang].pcb));
+    await js(win, clickText('.rbtn', L[lang].pcb));
     await shot(win, path.join(dir, '03-pcb.png'));
-    await js(win, clickText('.seg button', L[lang].real));
+    await js(win, clickText('.rbtn', L[lang].real));
     await shot(win, path.join(dir, '04-realistic.png'));
     await js(win, clickText('.mobile-nav button', L[lang].side));
-    await js(win, click('.tabs button', 4));
+    await js(win, click('.vtabs button', 4));
     await shot(win, path.join(dir, '05-order.png'));
     await js(win, clickText('.mobile-nav button', L[lang].chat));
     await js(win, `const l = document.querySelector('.chat-list'); l.style.scrollBehavior = 'auto'; l.scrollTop = 0; await new Promise(r => setTimeout(r, 300));`);

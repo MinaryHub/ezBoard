@@ -6,6 +6,7 @@ import { runDrc } from '../lib/drc';
 import { buildBom, buildGerberOnlyZip, buildZip } from '../lib/gerber';
 import { saveFile } from '../lib/platform';
 import { t as tt, useLang, useT, type TKey } from '../i18n';
+import Icon, { type IconName } from './Icon';
 
 export type Tab = 'part' | 'add' | 'nets' | 'check' | 'order';
 const TABS: Tab[] = ['part', 'add', 'nets', 'check', 'order'];
@@ -17,23 +18,32 @@ async function download(blob: Blob, name: string) {
 const fileBase = (name: string) => name.replace(/[\\/:*?"<>|\s]+/g, '_') || 'ezboard';
 const Html = ({ html, className }: { html: string; className?: string }) => <div className={className} dangerouslySetInnerHTML={{ __html: html }} />;
 
-export default function SidePanel({ tab, setTab }: { tab: Tab; setTab: (t: Tab) => void }) {
+const TAB_ICON: Record<Tab, IconName> = { part: 'part', add: 'add', nets: 'nets', check: 'shield', order: 'order' };
+
+export default function SidePanel({ tab, setTab, errorCount = 0 }: { tab: Tab; setTab: (t: Tab) => void; errorCount?: number }) {
   const board = useStore((s) => s.project.board);
   const lang = useLang((s) => s.lang);
   const t = useT();
   return (
     <aside className="side">
-      <nav className="tabs">
+      {/* 세로 아이콘 탭 (Kreate 속성 패널처럼) */}
+      <nav className="vtabs">
         {TABS.map((id) => (
-          <button key={id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)} data-tip={t(`tip.tab.${id}` as TKey)}>{t(`tab.${id}` as TKey)}</button>
+          <button key={id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)} data-tip={`${t(`tab.${id}` as TKey)} — ${t(`tip.tab.${id}` as TKey)}`} aria-label={t(`tab.${id}` as TKey)}>
+            <Icon name={TAB_ICON[id]} />
+            {id === 'check' && errorCount > 0 && <span className="badge" />}
+          </button>
         ))}
       </nav>
+      <div className="side-main">
+      <div className="area-head"><div className="area-title"><Icon name={TAB_ICON[tab]} size={14} />{t(`tab.${tab}` as TKey)}</div></div>
       <div className="side-body" key={lang}>
         {tab === 'part' && <PartTab />}
         {tab === 'add' && <AddTab onAdded={() => setTab('part')} />}
         {tab === 'nets' && <NetsTab />}
         {tab === 'check' && <CheckTab />}
         {tab === 'order' && <OrderTab key={`${board.width}x${board.height}`} />}
+      </div>
       </div>
     </aside>
   );
@@ -84,7 +94,7 @@ function PartTab() {
         <input value={part.value} onChange={(e) => updatePart(part.ref, { value: e.target.value })} />
       </label>
       <div className="row">
-        <button onClick={() => rotatePart(part.ref)} data-tip={t('tip.rotate')}>{t('part.rotate', { deg: part.rot })}</button>
+        <button onClick={() => rotatePart(part.ref)} data-tip={t('tip.rotate')}><Icon name="rotate" size={14} />{t('part.rotate', { deg: part.rot })}</button>
         <button className="danger" onClick={() => deletePart(part.ref)} data-tip={t('tip.delete')}>{t('part.delete')}</button>
       </div>
       {pinHelp && <div className="tip">{t('part.pins', { help: pinHelp })}</div>}
@@ -214,14 +224,14 @@ function CheckTab() {
   const lang = useLang((s) => s.lang);
   const t = useT();
   const issues = useMemo(() => runDrc(project), [project, lang]); // eslint-disable-line react-hooks/exhaustive-deps
-  const icon = { error: '⛔', warning: '⚠️', info: 'ℹ️' };
+
   if (!project.parts.length) return <div className="empty">{t('check.empty')}</div>;
   return (
     <>
       <div className="section-label">{t('check.title')}</div>
       {issues.map((it, i) => (
         <button key={i} className={`issue ${it.level}`} onClick={() => it.refs?.[0] && select(it.refs[0])}>
-          <span>{icon[it.level]}</span><span>{it.message}</span>
+          <span>{it.message}</span>
         </button>
       ))}
       {issues.some((i) => i.level === 'error') && <div className="tip">{t('check.fixTip')}</div>}
@@ -262,7 +272,7 @@ function OrderTab() {
         disabled={!project.parts.length}
         data-tip={t('tip.orderAll')}
         onClick={async () => { await download(await buildZip(project), `${fileBase(project.name)}_${t('order.fileAll')}.zip`); notify(t('toast.orderDone')); }}
-      >{t('order.all')}</button>
+      ><Icon name="order" size={15} />{t('order.all')}</button>
       <button className="block" disabled={!project.parts.length} data-tip={t('tip.orderGerber')} onClick={async () => download(await buildGerberOnlyZip(project), `${fileBase(project.name)}_gerber.zip`)}>
         {t('order.gerber')}
       </button>
