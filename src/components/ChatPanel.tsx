@@ -102,7 +102,7 @@ export default function ChatPanel({ onOpenSettings, onCircuit }: { onOpenSetting
         <div className="chat-title">{t('chat.title')}</div>
         <select value={settings.provider} onChange={(e) => setSettings({ ...settings, provider: e.target.value as Provider })} data-tip={t('tip.provider')}>
           {(Object.keys(PROVIDERS) as Provider[]).map((p) => (
-            <option key={p} value={p}>{PROVIDERS[p].label}{settings.keys[p] ? '' : t('chat.noKey')}</option>
+            <option key={p} value={p}>{PROVIDERS[p].short}{settings.keys[p] ? '' : t('chat.noKey')}</option>
           ))}
         </select>
         {messages.length > 0 && <button className="ghost small" onClick={clearChat} data-tip={t('tip.clearChat')}>🗑</button>}

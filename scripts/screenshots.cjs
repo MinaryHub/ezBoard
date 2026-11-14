@@ -67,9 +67,46 @@ async function load(win, file = path.join(ROOT, 'dist', 'index.html')) {
 
 async function fresh(win, lang) {
   await load(win);
-  await js(win, `localStorage.clear(); localStorage.setItem('ezboard.lang', '${lang}');`);
+  await js(win, `localStorage.clear(); localStorage.setItem('ezboard.lang', '${lang}');
+    localStorage.setItem('ezboard.settings', JSON.stringify({ provider: 'claude', keys: { claude: 'demo', gemini: 'demo', openai: 'demo' } }));`);
   await load(win);
   await wait(600);
+}
+
+// 영어가 기본 세트, 한국어는 ko/ 아래
+const langDir = (lang) => (lang === 'en' ? OUT : path.join(OUT, 'ko'));
+const LANGS = ['en', 'ko'];
+
+// 스토어 화면용 AI 대화 (실제 앱이 보여주는 답변 형식과 같게)
+const CHAT = {
+  en: {
+    blink: [
+      { role: 'user', content: 'I want an LED that blinks about once a second, powered by a 9V battery.' },
+      { role: 'assistant', circuitApplied: true, content: "Here's a classic **555 timer blinker**, a great first project!\n\n#### How it works\n- The 555 timer (**U1**) charges and discharges **C1** through **R1** and **R2**, switching its OUT pin on and off.\n- With 10kΩ, 68kΩ and 10µF it toggles about **once per second** (f ≈ 1.44 / ((R1 + 2·R2)·C1) ≈ 1 Hz).\n- **R3** (470Ω) limits the LED current to about 12 mA so it won't burn out.\n- **C3** (100nF) next to the IC keeps the power supply clean.\n\n#### Soldering tips\n1. Start with the low parts: resistors and ceramic capacitors.\n2. Mind the polarity of **C1** (+) and the **LED** (long leg = A).\n\n✅ **Applied to the PCB** — placed 9 parts, auto routing done" },
+    ],
+    nano: [
+      { role: 'user', content: 'Make a traffic light with red, yellow and green LEDs and a button on an Arduino Nano.' },
+      { role: 'assistant', circuitApplied: true, content: "Done! Here's your **Arduino traffic light**.\n\n- Each LED gets its own **220Ω** resistor on pins **D5, D6, D7**.\n- The button goes to **D2** and uses the Nano's internal pull-up (`INPUT_PULLUP`), so no extra resistor is needed.\n- Power and code both come over USB.\n\n✅ **Applied to the PCB** — placed 8 parts, auto routing done" },
+    ],
+  },
+  ko: {
+    blink: [
+      { role: 'user', content: '9V 건전지로 1초마다 깜빡이는 LED 만들고 싶어' },
+      { role: 'assistant', circuitApplied: true, content: "초보자에게 딱 좋은 **555 타이머 깜빡이** 회로를 만들었어요!\n\n#### 동작 원리\n- 555 타이머(**U1**)가 **R1**, **R2**를 통해 **C1**을 충전·방전하면서 OUT 핀을 켰다 껐다 해요.\n- 10kΩ, 68kΩ, 10µF 조합이면 약 **1초에 한 번** 깜빡여요 (f ≈ 1.44 / ((R1 + 2·R2)·C1) ≈ 1Hz).\n- **R3**(470Ω)가 LED 전류를 약 12mA로 제한해서 LED가 타지 않아요.\n- IC 옆의 **C3**(100nF)가 전원 노이즈를 줄여줘요.\n\n#### 납땜 팁\n1. 키가 낮은 부품(저항, 세라믹 커패시터)부터 납땜하세요.\n2. **C1**(+)과 **LED**(긴 다리 = A)의 방향을 꼭 확인하세요.\n\n✅ **PCB에 적용했어요** — 부품 9개 배치, 자동 배선 완료" },
+    ],
+    nano: [
+      { role: 'user', content: '아두이노 나노로 빨강/노랑/초록 신호등이랑 버튼 하나 만들어줘' },
+      { role: 'assistant', circuitApplied: true, content: "**아두이노 신호등**을 만들었어요!\n\n- LED마다 **220Ω** 저항을 달아 **D5, D6, D7** 핀에 연결했어요.\n- 버튼은 **D2**에 연결하고 나노의 내부 풀업(`INPUT_PULLUP`)을 쓰니까 저항이 따로 필요 없어요.\n- 전원과 코드는 USB로 넣으면 돼요.\n\n✅ **PCB에 적용했어요** — 부품 8개 배치, 자동 배선 완료" },
+    ],
+  },
+};
+
+// 예제 회로를 불러온 뒤 대화 내용을 스토어용 대화로 바꾸고 다시 불러온다
+async function loadExampleWithChat(win, idx, msgs) {
+  await js(win, click('.example', idx));
+  await js(win, `localStorage.setItem('ezboard.chat', ${JSON.stringify(JSON.stringify(msgs))});`);
+  await load(win);
+  await wait(700);
 }
 
 const L = {
@@ -79,14 +116,13 @@ const L = {
 
 async function desktop(cfg) {
   const win = await makeWindow(cfg.w, cfg.h);
-  for (const lang of ['ko', 'en']) {
-    const dir = path.join(OUT, lang, cfg.dir);
+  for (const lang of LANGS) {
+    const dir = path.join(langDir(lang), cfg.dir);
     await fresh(win, lang);
     // 1. 환영 화면
     await shot(win, path.join(dir, '01-welcome.png'));
     // 2. AI 대화 + 회로도 (555 예제)
-    await js(win, click('.example', 1));
-    await js(win, `document.querySelector('.sch-canvas')?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); await new Promise(r => setTimeout(r, 300));`);
+    await loadExampleWithChat(win, 1, CHAT[lang].blink);
     await shot(win, path.join(dir, '02-ai-schematic.png'));
     // 3. PCB 편집 + 기능 설명 풍선
     await js(win, clickText('.stage-switch button', L[lang].pcb));
@@ -100,10 +136,7 @@ async function desktop(cfg) {
     await shot(win, path.join(dir, '04-realistic-order.png'));
     // 5. 아두이노 예제 회로도
     await js(win, `window.confirm = () => true;` + click('.top-actions button', 0));
-    await js(win, click('.example', 2));
-    await js(win, clickText('.stage-switch button', L[lang].sch));
-    await js(win, click('.tabs button', 0));
-    await js(win, `document.querySelector('.sch-canvas')?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); await new Promise(r => setTimeout(r, 300));`);
+    await loadExampleWithChat(win, 2, CHAT[lang].nano);
     await shot(win, path.join(dir, '05-arduino-schematic.png'));
   }
   win.destroy();
@@ -111,12 +144,12 @@ async function desktop(cfg) {
 
 async function phone(cfg) {
   const win = await makeWindow(cfg.w, cfg.h);
-  for (const lang of ['ko', 'en']) {
-    const dir = path.join(OUT, lang, cfg.dir);
+  for (const lang of LANGS) {
+    const dir = path.join(langDir(lang), cfg.dir);
     await fresh(win, lang);
     await shot(win, path.join(dir, '01-welcome.png'));
-    await js(win, click('.example', 1));
-    await wait(900); // 예제를 불러오면 회로도 화면으로 자동 이동
+    await loadExampleWithChat(win, 1, CHAT[lang].blink);
+    await js(win, clickText('.mobile-nav button', L[lang].sch));
     await shot(win, path.join(dir, '02-schematic.png'));
     await js(win, clickText('.stage-switch button', L[lang].pcb));
     await shot(win, path.join(dir, '03-pcb.png'));
@@ -126,6 +159,7 @@ async function phone(cfg) {
     await js(win, click('.tabs button', 4));
     await shot(win, path.join(dir, '05-order.png'));
     await js(win, clickText('.mobile-nav button', L[lang].chat));
+    await js(win, `const l = document.querySelector('.chat-list'); l.style.scrollBehavior = 'auto'; l.scrollTop = 0; await new Promise(r => setTimeout(r, 300));`);
     await shot(win, path.join(dir, '06-chat.png'));
   }
   win.destroy();
@@ -134,8 +168,8 @@ async function phone(cfg) {
 // Google Play 대표 이미지 (1024x500)
 async function feature() {
   const logo = fs.readFileSync(path.join(ROOT, 'logo', 'logo-dark-transparent.svg')).toString('base64');
-  for (const lang of ['ko', 'en']) {
-    const shotFile = path.join(OUT, lang, 'desktop-1920x1080', '03-pcb-tooltip.png');
+  for (const lang of LANGS) {
+    const shotFile = path.join(langDir(lang), 'desktop-1920x1080', '03-pcb-tooltip.png');
     const img = fs.readFileSync(shotFile).toString('base64');
     const text = lang === 'ko'
       ? { t: '말로 만드는 PCB', s: 'AI와 대화하면 회로도, PCB, 주문 파일까지<br>초보자도 쉽게 완성해요', b: ['Claude · Gemini · GPT', '자동 배치 · 자동 배선', '거버 파일 내보내기'] }
@@ -158,7 +192,7 @@ async function feature() {
     fs.writeFileSync(tmp, html);
     const win = await makeWindow(1024, 500);
     await load(win, tmp);
-    await shot(win, path.join(OUT, lang, 'play-feature-graphic-1024x500.png'), [1024, 500]);
+    await shot(win, path.join(langDir(lang), 'play-feature-graphic-1024x500.png'), [1024, 500]);
     win.destroy();
   }
   fs.copyFileSync(path.join(ROOT, 'build', 'icons', '512x512.png'), path.join(OUT, 'app-icon-512.png'));

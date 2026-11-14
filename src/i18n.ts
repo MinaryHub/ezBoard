@@ -430,11 +430,12 @@ function initialLang(): Lang {
     const saved = localStorage.getItem('ezboard.lang');
     if (saved === 'ko' || saved === 'en') return saved;
   } catch { /* 무시 */ }
-  return (navigator.language || 'en').toLowerCase().startsWith('ko') ? 'ko' : 'en';
+  return (globalThis.navigator?.language || 'en').toLowerCase().startsWith('ko') ? 'ko' : 'en';
 }
 
 /** 문서 언어와 창 제목 */
 function applyDocLang(lang: Lang) {
+  if (typeof document === 'undefined') return; // 테스트(Node) 환경
   document.documentElement.lang = lang;
   document.title = lang === 'ko' ? 'ezBoard — AI PCB 설계' : 'ezBoard — AI PCB Design';
 }

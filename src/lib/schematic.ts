@@ -48,7 +48,13 @@ export function labelPlacement(part: Part, pos: SchPos) {
     return { x: b.x2 + 0.6, y1: cy - 0.3, y2: cy + 1.0, anchor: 'start' as const, rect: { x1: b.x2, y1: cy - 1.5, x2: b.x2 + 0.6 + lw, y2: cy + 1.4 } };
   if (side === 'l')
     return { x: b.x1 - 0.6, y1: cy - 0.3, y2: cy + 1.0, anchor: 'end' as const, rect: { x1: b.x1 - 0.6 - lw, y1: cy - 1.5, x2: b.x1, y2: cy + 1.4 } };
-  return { x: b.x2 + 0.4, y1: b.y1 - 1.6, y2: b.y1 - 0.4, anchor: 'start' as const, rect: { x1: b.x2, y1: b.y1 - 2.8, x2: b.x2 + 0.4 + lw, y2: b.y1 } };
+  return { x: b.x1 - 0.4, y1: b.y1 - 1.6, y2: b.y1 - 0.4, anchor: 'end' as const, rect: { x1: b.x1 - 0.4 - lw, y1: b.y1 - 2.8, x2: b.x1, y2: b.y1 } };
+}
+
+/** 전원 기호가 핀에서 뻗어 나가는 길이. 옆으로 향한 전원 기호는 이름 글자까지 포함 */
+export function powerReach(net: string, dir: Dir): number {
+  if (netKind(net) === 'gnd' || dir === 'u' || dir === 'd') return 3.2;
+  return 2.8 + net.length * 0.68;
 }
 
 /** 부품이 차지하는 전체 영역 (기호 + 핀 + 글자 + 전원 기호) */
@@ -59,8 +65,9 @@ export function extentOf(part: Part, pos: SchPos, pinNet: Map<string, string>): 
     grow(p.x, p.y);
     if (p.net && netKind(p.net) !== 'signal') {
       const [dx, dy] = DIRV[p.dir];
-      grow(p.x + dx * 3.2 + dy * 1.6, p.y + dy * 3.2 + dx * 1.6);
-      grow(p.x + dx * 3.2 - dy * 1.6, p.y + dy * 3.2 - dx * 1.6);
+      const len = powerReach(p.net, p.dir);
+      grow(p.x + dx * len + dy * 1.6, p.y + dy * len + dx * 1.6);
+      grow(p.x + dx * len - dy * 1.6, p.y + dy * len - dx * 1.6);
     }
   }
   const l = labelPlacement(part, pos).rect;
@@ -211,6 +218,14 @@ export function routeSchematic(parts: Part[], nets: Net[], pos: Record<string, S
   for (const b of bodies)
     for (let y = Math.ceil(b.y1); y <= Math.floor(b.y2); y++)
       for (let x = Math.ceil(b.x1); x <= Math.floor(b.x2); x++) setBoth(x, y, BLOCK);
+  // 부품 이름표(참조·값) 위로도 전선이 지나가지 않게
+  for (const p of parts) {
+    const ps = pos[p.ref];
+    if (!ps) continue;
+    const r = labelPlacement(p, ps).rect;
+    for (let y = Math.floor(r.y1); y <= Math.ceil(r.y2); y++)
+      for (let x = Math.floor(r.x1); x <= Math.ceil(r.x2); x++) setBoth(x, y, BLOCK);
+  }
 
   // 기호 바로 옆 칸은 비용을 높여 전선이 기호에 붙어 다니지 않게
   const near = new Float32Array(N);
@@ -230,7 +245,8 @@ export function routeSchematic(parts: Part[], nets: Net[], pos: Record<string, S
     }
     if (p.net && netKind(p.net) !== 'signal') {
       out.power.push({ net: p.net, kind: netKind(p.net), x: p.x, y: p.y, dir: p.dir });
-      for (let k = 0; k <= 3; k++) for (const s of [-1, 0, 1]) setBoth(p.x + dx * k + dy * s, p.y + dy * k + dx * s, BLOCK);
+      const len = Math.ceil(powerReach(p.net, p.dir));
+      for (let k = 0; k <= len; k++) for (const s of [-1, 0, 1]) setBoth(p.x + dx * k + dy * s, p.y + dy * k + dx * s, BLOCK);
     } else {
       setBoth(p.x, p.y, p.net ? netId.get(p.net)! : uniq++);
     }

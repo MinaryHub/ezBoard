@@ -3,10 +3,10 @@ import type { AiSettings, ChatMessage, Net, Part, Project, Provider } from '../t
 import { LIBRARY, librarySummary } from './library';
 import { getLang, t } from '../i18n';
 
-export const PROVIDERS: Record<Provider, { label: string; keyUrl: string; keyHint: string; defaultModel: string }> = {
-  claude: { label: 'Claude (Anthropic)', keyUrl: 'https://console.anthropic.com/settings/keys', keyHint: 'sk-ant-...', defaultModel: 'claude-sonnet-5-5' },
-  gemini: { label: 'Gemini (Google)', keyUrl: 'https://aistudio.google.com/apikey', keyHint: 'AIza...', defaultModel: 'gemini-2.5-pro' },
-  openai: { label: 'GPT (OpenAI)', keyUrl: 'https://platform.openai.com/api-keys', keyHint: 'sk-...', defaultModel: 'gpt-5' },
+export const PROVIDERS: Record<Provider, { label: string; short: string; keyUrl: string; keyHint: string; defaultModel: string }> = {
+  claude: { label: 'Claude (Anthropic)', short: 'Claude', keyUrl: 'https://console.anthropic.com/settings/keys', keyHint: 'sk-ant-...', defaultModel: 'claude-sonnet-5-5' },
+  gemini: { label: 'Gemini (Google)', short: 'Gemini', keyUrl: 'https://aistudio.google.com/apikey', keyHint: 'AIza...', defaultModel: 'gemini-2.5-pro' },
+  openai: { label: 'GPT (OpenAI)', short: 'GPT', keyUrl: 'https://platform.openai.com/api-keys', keyHint: 'sk-...', defaultModel: 'gpt-5' },
 };
 
 export interface AiCircuit {
