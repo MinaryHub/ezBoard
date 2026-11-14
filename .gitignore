@@ -30,3 +30,6 @@ android/.gradle
 
 # 로컬 도구 설정
 .claude/
+
+# Vercel 연결 정보
+.vercel
