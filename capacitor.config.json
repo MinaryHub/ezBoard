@@ -1,0 +1,11 @@
+{
+  "appId": "com.ezboard.app",
+  "appName": "ezBoard",
+  "webDir": "dist",
+  "android": {
+    "adjustMarginsForEdgeToEdge": "auto"
+  },
+  "plugins": {
+    "CapacitorHttp": { "enabled": true }
+  }
+}

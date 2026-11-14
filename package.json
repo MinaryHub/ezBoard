@@ -1,0 +1,113 @@
+{
+  "name": "ezboard",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview",
+    "test:engine": "tsx scripts/engine-test.ts",
+    "test:stress": "tsx scripts/stress.ts",
+    "electron:dev": "npm run build && electron .",
+    "icons": "node scripts/make-icons.mjs",
+    "dist:mac": "npm run build && electron-builder --mac --arm64 --x64",
+    "dist:win": "npm run build && electron-builder --win --x64",
+    "dist:linux": "npm run build && electron-builder --linux --x64",
+    "android:sync": "npm run build && npx cap sync android",
+    "android:apk": "npm run android:sync && cd android && ./gradlew assembleRelease",
+    "screenshots": "npm run build && electron scripts/screenshots.cjs"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@capacitor/android": "^8.6.2",
+    "@capacitor/cli": "^8.6.2",
+    "@capacitor/core": "^8.6.2",
+    "@capacitor/filesystem": "^8.1.5",
+    "@capacitor/share": "^8.0.3",
+    "@types/node": "^24.19.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "electron": "^45.3.2",
+    "electron-builder": "^26.18.0",
+    "jszip": "^3.10.2",
+    "oxlint": "^1.90.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "sharp": "^0.35.5",
+    "tsx": "^4.23.15",
+    "typescript": "~7.0.2",
+    "vite": "^8.3.6",
+    "zustand": "^5.1.0"
+  },
+  "description": "초보자를 위한 AI 대화형 PCB 설계 프로그램",
+  "author": {
+    "name": "ezBoard"
+  },
+  "homepage": "https://github.com/knoxxr/ezBoard",
+  "main": "electron/main.cjs",
+  "build": {
+    "appId": "com.ezboard.app",
+    "productName": "ezBoard",
+    "copyright": "ezBoard",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**",
+      "electron/**",
+      "build/icon.png",
+      "package.json"
+    ],
+    "asar": true,
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.png",
+      "identity": "-",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
+    },
+    "dmg": {
+      "title": "ezBoard ${version}",
+      "artifactName": "ezBoard-${version}-mac-${arch}.${ext}"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "ezBoard-${version}-windows-${arch}-setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "shortcutName": "ezBoard",
+      "installerLanguages": [
+        "ko_KR",
+        "en_US"
+      ],
+      "language": "1042"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "build/icons",
+      "category": "Development",
+      "maintainer": "ezBoard <noreply@ezboard.app>",
+      "synopsis": "AI PCB 설계",
+      "artifactName": "ezBoard-${version}-linux-${arch}.${ext}",
+      "syncDesktopName": true
+    }
+  },
+  "desktopName": "ezboard.desktop"
+}
