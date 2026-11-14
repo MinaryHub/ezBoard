@@ -46,7 +46,7 @@
   "author": {
     "name": "ezBoard"
   },
-  "homepage": "https://github.com/knoxxr/ezBoard",
+  "homepage": "https://github.com/MinaryHub/ezBoard",
   "main": "electron/main.cjs",
   "build": {
     "appId": "com.ezboard.app",
