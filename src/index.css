@@ -318,6 +318,40 @@ code, kbd {
 
 .toast { position: fixed; bottom: 36px; left: 50%; transform: translateX(-50%); background: var(--raised); border: 1px solid var(--border-strong); padding: 8px 14px; border-radius: var(--radius-card); z-index: 20; box-shadow: 0 8px 28px #0008; font-size: 12px; }
 
+/* 메뉴 (도움말) — Kreate 메뉴처럼 한 단계 밝은 카드 */
+.menu-wrap { position: relative; }
+.menubar button.ghost.open { background: var(--raised); color: var(--text); }
+.menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 30; min-width: 220px; padding: 4px; background: var(--raised); border: 1px solid var(--border-strong); border-radius: var(--radius-card); box-shadow: 0 12px 32px #0009; display: flex; flex-direction: column; }
+.menu button { justify-content: flex-start; background: transparent; height: 28px; padding: 0 10px; gap: 9px; color: var(--text); width: 100%; }
+.menu button:hover:not(:disabled) { background: var(--accent-wash); }
+.menu button .icon { color: var(--text-dim); display: block; }
+.menu-sep { height: 1px; background: var(--border); margin: 4px 6px; }
+.menu-badge { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--info); background: var(--info-wash); padding: 0 5px; border-radius: 3px; }
+.update-badge { height: 18px; padding: 0 7px; gap: 4px; font-size: 11px; color: var(--info); background: var(--info-wash); border-radius: 3px; }
+.update-badge:hover:not(:disabled) { background: var(--info-wash); filter: brightness(1.2); }
+
+/* 업데이트·문의 창 */
+.upd-head { margin: 4px 0 2px; }
+.upd-version { font-size: 14px; font-weight: 600; }
+.upd-notes { max-height: 240px; overflow-y: auto; background: var(--base); border-radius: var(--radius); padding: 8px 12px; font-size: 12px; }
+.upd-notes table { border-collapse: collapse; }
+.upd-ok { display: flex; gap: 8px; align-items: center; color: var(--text); }
+.upd-ok .icon { color: var(--info); }
+.progress { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.progress .bar { flex: 1; height: 6px; background: var(--base); border-radius: 3px; overflow: hidden; }
+.progress .bar i { display: block; height: 100%; background: var(--accent); transition: width .2s; }
+.form-error { color: var(--error); background: var(--error-wash); padding: 6px 10px; border-radius: var(--radius); }
+.form-field { display: flex; flex-direction: column; gap: 4px; color: var(--text-dim); margin: 8px 0; position: relative; flex: 1; min-width: 0; }
+.form-field textarea, .form-field input { background: var(--base); color: var(--text); }
+.form-field input.invalid { border-color: var(--error); }
+.form-field .counter { position: absolute; right: 8px; bottom: 6px; color: var(--text-faint); pointer-events: none; }
+.form-row { display: flex; gap: 8px; }
+.kind-seg { margin: 6px 0 2px; flex-wrap: wrap; }
+.kind-seg button { background: var(--base); }
+.hp { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+.about { display: flex; gap: 16px; align-items: center; margin: 10px 0 6px; }
+.about-name { font-size: 18px; font-weight: 700; }
+
 /* 설명 풍선 (Kreate의 명령 설명 카드처럼 어두운 카드) */
 .tooltip {
   position: fixed; z-index: 50; pointer-events: none;
@@ -345,6 +379,8 @@ code, kbd {
   .doc-tab input { width: 100%; }
   .menubar .spacer { display: none; }
   .menubar .mi .icon { display: block; }
+  .menu { left: auto; right: -80px; }
+  .form-row { flex-direction: column; gap: 0; }
   .menubar .lbl { display: none; }
   .menubar button.ghost { padding: 0 6px; }
   .doc-tab input { font-size: 13px; }

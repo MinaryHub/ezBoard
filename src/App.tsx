@@ -7,6 +7,9 @@ import SidePanel, { type Tab } from './components/SidePanel';
 import SettingsModal from './components/SettingsModal';
 import Tooltip from './components/Tooltip';
 import Icon, { type IconName } from './components/Icon';
+import { AboutDialog, ContactDialog, UpdateDialog } from './components/HelpDialogs';
+import { autoCheck, type UpdateInfo } from './lib/update';
+import { SPONSORS_URL, openExternal } from './lib/meta';
 import { runDrc, unroutedCount } from './lib/drc';
 import type { Project } from './types';
 import { saveFile } from './lib/platform';
@@ -32,6 +35,26 @@ export default function App() {
   const [pane, setPane] = useState<'chat' | 'stage' | 'side'>('chat');
   const fileRef = useRef<HTMLInputElement>(null);
   const [lastMsg, setLastMsg] = useState('');
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [dialog, setDialog] = useState<'update' | 'contact' | 'about' | null>(null);
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const helpRef = useRef<HTMLDivElement>(null);
+
+  // 시작하고 잠시 뒤, 하루에 한 번 조용히 새 버전을 확인한다
+  useEffect(() => {
+    const id = setTimeout(() => { autoCheck().then((info) => info && setUpdateInfo(info)); }, 3000);
+    return () => clearTimeout(id);
+  }, []);
+  // 도움말 메뉴: 바깥을 누르거나 Esc로 닫기
+  useEffect(() => {
+    if (!helpOpen) return;
+    const close = (e: Event) => { if (!helpRef.current?.contains(e.target as Node)) setHelpOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setHelpOpen(false); };
+    window.addEventListener('pointerdown', close, true);
+    window.addEventListener('keydown', esc);
+    return () => { window.removeEventListener('pointerdown', close, true); window.removeEventListener('keydown', esc); };
+  }, [helpOpen]);
+  const openDialog = (d: 'update' | 'contact' | 'about') => { setHelpOpen(false); setDialog(d); };
 
   useEffect(() => { document.documentElement.dataset.appearance = appearance; }, [appearance]);
   useEffect(() => { if (toast) setLastMsg(toast); }, [toast]);
@@ -96,6 +119,20 @@ export default function App() {
         <button className="ghost mi" onClick={() => { if (!project.parts.length || confirm(t('top.confirmNew'))) st.newProject(); }} data-tip={t('tip.new')}><Icon name="new" size={16} /><span className="lbl">{t('top.new')}</span></button>
         <button className="ghost mi" onClick={() => fileRef.current?.click()} data-tip={t('tip.open')}><Icon name="open" size={16} /><span className="lbl">{t('top.open')}</span></button>
         <button className="ghost mi" onClick={saveProject} data-tip={t('tip.save')}><Icon name="save" size={16} /><span className="lbl">{t('top.save')}</span></button>
+        <div className="menu-wrap" ref={helpRef}>
+          <button className={`ghost mi ${helpOpen ? 'open' : ''}`} onClick={() => setHelpOpen((o) => !o)} data-tip={helpOpen ? undefined : t('tip.help')} aria-haspopup="menu" aria-expanded={helpOpen}>
+            <Icon name="help" size={16} /><span className="lbl">{t('help.menu')}</span>
+          </button>
+          {helpOpen && (
+            <div className="menu" role="menu">
+              <button role="menuitem" onClick={() => openDialog('update')}><Icon name="download" size={15} />{t('help.update')}{updateInfo && <span className="menu-badge">{updateInfo.version}</span>}</button>
+              <button role="menuitem" onClick={() => openDialog('contact')}><Icon name="chat" size={15} />{t('help.contact')}</button>
+              <button role="menuitem" onClick={() => { setHelpOpen(false); openExternal(SPONSORS_URL); }}><Icon name="heart" size={15} />{t('help.sponsor')}</button>
+              <div className="menu-sep" />
+              <button role="menuitem" onClick={() => openDialog('about')}><Icon name="help" size={15} />{t('help.about')}</button>
+            </div>
+          )}
+        </div>
         <button className="ghost" onClick={st.undo} disabled={!past} data-tip={t('tip.undo')}><Icon name="undo" size={15} /></button>
         <button className="ghost" onClick={st.redo} disabled={!future} data-tip={t('tip.redo')}><Icon name="redo" size={15} /></button>
         <div className="doc-tab" data-tip={t('tip.name')}>
@@ -223,6 +260,11 @@ export default function App() {
           <span><kbd>{t('sb.drag')}</kbd>{t('sb.pan')}</span>
         </span>
         <span className="status-msg">{lastMsg || t('sb.ready')}</span>
+        {updateInfo && (
+          <button className="update-badge" onClick={() => setDialog('update')} data-tip={t('tip.updateBadge')}>
+            <Icon name="download" size={12} />{t('upd.badge', { v: updateInfo.version })}
+          </button>
+        )}
         {project.parts.length > 0 && (
           <span className="status-sum">
             <span>{t('sb.parts', { n: project.parts.length })}</span>
@@ -233,6 +275,9 @@ export default function App() {
       </footer>
 
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
+      {dialog === 'update' && <UpdateDialog initial={updateInfo} onClose={() => setDialog(null)} />}
+      {dialog === 'contact' && <ContactDialog onClose={() => setDialog(null)} />}
+      {dialog === 'about' && <AboutDialog onClose={() => setDialog(null)} />}
       {toast && <div className="toast">{toast}</div>}
       <Tooltip />
     </div>
