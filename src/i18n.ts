@@ -64,7 +64,7 @@ const ko = {
   'toast.wireSame': '이미 같은 연결({net})이에요.',
   'toast.wireShort': '{a}와 {b}를 이으면 합선돼요. 연결하지 않았어요.',
   'toast.wireRemoved': '{pin}을 {net} 연결에서 뺐어요.',
-  'canvas.pinTitle': '{pin}{net}\n끌어서 다른 핀에 놓으면 연결 · Alt+클릭: 연결 끊기',
+  'canvas.pinTitle': '{pin}{net}\n끌어서 다른 핀(패드)에 놓으면 연결 · Alt+클릭: 연결 끊기',
   // 채팅
   'chat.title': 'AI 회로 도우미',
   'chat.noKey': ' (키 없음)',
@@ -385,7 +385,7 @@ const en: Dict = {
   'toast.wireSame': 'Already on the same net ({net}).',
   'toast.wireShort': 'Joining {a} and {b} would short them. Not connected.',
   'toast.wireRemoved': 'Removed {pin} from {net}.',
-  'canvas.pinTitle': '{pin}{net}\nDrag onto another pin to connect · Alt+click: disconnect',
+  'canvas.pinTitle': '{pin}{net}\nDrag onto another pin (pad) to connect · Alt+click: disconnect',
   'chat.title': 'AI circuit helper',
   'chat.noKey': ' (no key)',
   'chat.welcome': 'What do you want to build?',

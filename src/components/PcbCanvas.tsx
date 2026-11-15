@@ -4,7 +4,7 @@ import { useT } from '../i18n';
 import { partName } from '../lib/library.i18n';
 import { usePinchZoom } from './usePinchZoom';
 import { useRefitOnShow } from './useRefitOnShow';
-import { getDef, partBox, placedPads, rotatePoint, resolvePin } from '../lib/library';
+import { getDef, partBox, placedPads, rotatePoint, resolvePin, type PlacedPad } from '../lib/library';
 import { netConnections, snap } from '../lib/geometry';
 import { textStrokes } from '../lib/font';
 import { refLabelPos } from '../lib/gerber';
@@ -12,7 +12,11 @@ import { VIA_D, VIA_DRILL } from '../lib/router';
 
 type Drag =
   | { kind: 'part'; ref: string; dx: number; dy: number; moved: boolean }
-  | { kind: 'pan'; sx: number; sy: number; vx: number; vy: number };
+  | { kind: 'pan'; sx: number; sy: number; vx: number; vy: number }
+  | { kind: 'wire'; from: PlacedPad; x: number; y: number };
+
+/** 패드를 놓을 때 인정하는 거리 (mm, 패드 크기에 더함) */
+const PAD_SNAP = 0.8;
 
 export default function PcbCanvas() {
   const project = useStore((s) => s.project);
@@ -20,7 +24,7 @@ export default function PcbCanvas() {
   const view = useStore((s) => s.view);
   const show = useStore((s) => s.showLayer);
   const lastRoute = useStore((s) => s.lastRoute);
-  const { select, movePart, rotatePart, deletePart, undo, redo } = useStore.getState();
+  const { select, movePart, rotatePart, deletePart, undo, redo, connectSchPins, disconnectSchPin } = useStore.getState();
 
   const svgRef = useRef<SVGSVGElement>(null);
   const tr = useT();
@@ -82,6 +86,11 @@ export default function PcbCanvas() {
 
   const onPointerMove = (e: React.PointerEvent) => {
     if (!drag) return;
+    if (drag.kind === 'wire') {
+      const p = toSvg(e);
+      setDrag({ ...drag, x: p.x, y: p.y });
+      return;
+    }
     if (drag.kind === 'pan') {
       const el = svgRef.current!.getBoundingClientRect();
       const scale = vb.w / el.width;
@@ -99,6 +108,28 @@ export default function PcbCanvas() {
   };
 
   const pads = useMemo(() => project.parts.flatMap(placedPads), [project.parts]);
+
+  /** 이 위치에 있는 패드 (끌기 중 놓을 곳). 다른 부품의 패드가 겹치면 가까운 쪽 */
+  const padAt = (x: number, y: number, except?: PlacedPad): PlacedPad | null => {
+    let best: PlacedPad | null = null;
+    let bd = Infinity;
+    for (const p of pads) {
+      if (except && p.ref === except.ref && p.num === except.num) continue;
+      const reach = Math.max(p.aw, p.ah) / 2 + PAD_SNAP;
+      const d = Math.hypot(p.ax - x, p.ay - y);
+      if (d <= reach && d < bd) { bd = d; best = p; }
+    }
+    return best;
+  };
+  const wireTarget = drag?.kind === 'wire' ? padAt(drag.x, drag.y, drag.from) : null;
+
+  const onPointerUp = () => {
+    if (drag?.kind === 'wire') {
+      const t = padAt(drag.x, drag.y, drag.from);
+      if (t) connectSchPins({ ref: drag.from.ref, name: drag.from.pin }, { ref: t.ref, name: t.pin });
+    }
+    setDrag(null);
+  };
   const pinNet = useMemo(() => {
     const m = new Map<string, string>();
     for (const n of project.nets) for (const pin of n.pins) for (const pad of resolvePin(project.parts, pin)) m.set(`${pad.ref}.${pad.num}`, n.name);
@@ -138,7 +169,7 @@ export default function PcbCanvas() {
         select(null);
       }}
       onPointerMove={onPointerMove}
-      onPointerUp={() => setDrag(null)}
+      onPointerUp={onPointerUp}
       onDoubleClick={fit}
     >
       <defs>
@@ -231,9 +262,23 @@ export default function PcbCanvas() {
       {pads.map((p) => {
         const net = pinNet.get(`${p.ref}.${p.num}`);
         const dim = !real && hoverNet && net !== hoverNet;
-        const fill = dim ? '#6b5a2c' : hoverNet && net === hoverNet ? '#ffe28a' : colors.pad;
+        const on = (wireTarget && wireTarget.ref === p.ref && wireTarget.num === p.num) || (drag?.kind === 'wire' && drag.from.ref === p.ref && drag.from.num === p.num);
+        const fill = dim ? '#6b5a2c' : on || (hoverNet && net === hoverNet) ? '#ffe28a' : colors.pad;
         return (
-          <g key={`${p.ref}.${p.num}`} pointerEvents="none">
+          <g
+            key={`${p.ref}.${p.num}`}
+            className="pcb-pad"
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              if (e.button !== 0) return;
+              if (e.altKey) { disconnectSchPin({ ref: p.ref, name: p.pin }); return; }
+              (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+              setDrag({ kind: 'wire', from: p, x: p.ax, y: p.ay });
+            }}
+            onPointerEnter={() => net && setHoverNet(net)}
+            onPointerLeave={() => setHoverNet(null)}
+          >
+            <title>{tr('canvas.pinTitle', { pin: `${p.ref}.${p.pin}`, net: net ? ` · ${net}` : '' })}</title>
             {p.shape === 'circle' ? (
               <circle cx={p.ax} cy={p.ay} r={p.aw / 2} fill={fill} />
             ) : (
@@ -246,6 +291,15 @@ export default function PcbCanvas() {
           </g>
         );
       })}
+
+      {/* 끌고 있는 새 연결 */}
+      {drag?.kind === 'wire' && (
+        <g pointerEvents="none">
+          <line x1={drag.from.ax} y1={drag.from.ay} x2={wireTarget?.ax ?? drag.x} y2={wireTarget?.ay ?? drag.y}
+            stroke={wireTarget ? '#ffe28a' : '#ff9e29'} strokeWidth={0.3} strokeDasharray={wireTarget ? undefined : '0.8 0.5'} strokeLinecap="round" />
+          {wireTarget && <circle cx={wireTarget.ax} cy={wireTarget.ay} r={Math.max(wireTarget.aw, wireTarget.ah) / 2 + 0.35} fill="none" stroke="#ffe28a" strokeWidth={0.25} />}
+        </g>
+      )}
 
       {/* 래츠네스트 */}
       {show.ratsnest && ratsnest.map((l, i) => (

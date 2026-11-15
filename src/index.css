@@ -410,3 +410,7 @@ code, kbd {
 .sch-pin .dot { fill: #266fc9; opacity: 0; transition: opacity .12s; }
 .sch-pin:hover .dot, .sch-pin.wiring .dot { opacity: .45; }
 .sch-pin.on .dot { opacity: 1; }
+
+/* PCB 패드: 끌어서 다른 패드에 놓으면 연결 */
+.pcb-pad { cursor: crosshair; }
+.pcb-pad:hover > circle:first-of-type, .pcb-pad:hover > rect:first-of-type { stroke: #ffe28a; stroke-width: 0.2; }
