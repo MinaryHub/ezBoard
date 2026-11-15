@@ -414,3 +414,14 @@ code, kbd {
 /* PCB 패드: 끌어서 다른 패드에 놓으면 연결 */
 .pcb-pad { cursor: crosshair; }
 .pcb-pad:hover > circle:first-of-type, .pcb-pad:hover > rect:first-of-type { stroke: #ffe28a; stroke-width: 0.2; }
+
+/* 핀(패드)을 눌렀을 때 뜨는 메뉴 */
+.pin-menu { position: fixed; z-index: 60; width: 220px; padding: 8px; background: var(--raised); color: var(--text); border: 1px solid var(--border, rgba(127,127,127,.25)); border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.35); font-size: 12px; }
+.pin-menu-head { padding: 2px 4px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pin-menu button { width: 100%; justify-content: flex-start; gap: 6px; min-height: 36px; }
+.pin-menu button.danger { color: var(--error); }
+.pin-menu-hint { padding: 6px 4px 0; color: var(--text-faint); font-size: 11px; }
+/* 마우스 없는 터치 화면: 가리킬 수 없으니 핀 끝을 늘 보여준다 */
+@media (hover: none) {
+  .sch-pin .dot { opacity: .35; }
+}

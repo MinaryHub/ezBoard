@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store';
 import { useT } from '../i18n';
 import { partName } from '../lib/library.i18n';
@@ -9,14 +9,17 @@ import { netConnections, snap } from '../lib/geometry';
 import { textStrokes } from '../lib/font';
 import { refLabelPos } from '../lib/gerber';
 import { VIA_D, VIA_DRILL } from '../lib/router';
+import PinMenu from './PinMenu';
 
 type Drag =
   | { kind: 'part'; ref: string; dx: number; dy: number; moved: boolean }
   | { kind: 'pan'; sx: number; sy: number; vx: number; vy: number }
-  | { kind: 'wire'; from: PlacedPad; x: number; y: number };
+  | { kind: 'wire'; from: PlacedPad; x: number; y: number; sx: number; sy: number };
 
 /** 패드를 놓을 때 인정하는 거리 (mm, 패드 크기에 더함) */
 const PAD_SNAP = 0.8;
+/** 이만큼(화면 px) 안 움직이고 떼면 탭으로 본다 */
+const TAP_PX = 8;
 
 export default function PcbCanvas() {
   const project = useStore((s) => s.project);
@@ -31,6 +34,8 @@ export default function PcbCanvas() {
   const [vb, setVb] = useState({ x: -10, y: -10, w: 80, h: 60 });
   const [drag, setDrag] = useState<Drag | null>(null);
   const [hoverNet, setHoverNet] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; pad: PlacedPad } | null>(null);
+  const closeMenu = useCallback(() => setMenu(null), []);
   const { board } = project;
   const real = view === 'real';
 
@@ -75,6 +80,7 @@ export default function PcbCanvas() {
   const pinch = usePinchZoom(toSvg, setVb, () => setDrag(null));
 
   const onWheel = (e: React.WheelEvent) => {
+    setMenu(null);
     const p = toSvg(e);
     const k = Math.exp(e.deltaY * 0.0015);
     setVb((v) => {
@@ -123,10 +129,12 @@ export default function PcbCanvas() {
   };
   const wireTarget = drag?.kind === 'wire' ? padAt(drag.x, drag.y, drag.from) : null;
 
-  const onPointerUp = () => {
+  const onPointerUp = (e: React.PointerEvent) => {
     if (drag?.kind === 'wire') {
       const t = padAt(drag.x, drag.y, drag.from);
       if (t) connectSchPins({ ref: drag.from.ref, name: drag.from.pin }, { ref: t.ref, name: t.pin });
+      // 끌지 않고 눌렀다 떼면(탭) 패드 메뉴 — 터치 화면에서 연결 끊기
+      else if (Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < TAP_PX) setMenu({ x: e.clientX, y: e.clientY, pad: drag.from });
     }
     setDrag(null);
   };
@@ -156,6 +164,7 @@ export default function PcbCanvas() {
   const gridStep = vb.w > 150 ? minor * 4 : minor * 2;
 
   return (
+    <>
     <svg
       ref={svgRef}
       className="pcb-canvas"
@@ -166,6 +175,7 @@ export default function PcbCanvas() {
         if (e.button !== 0 && e.button !== 1) return;
         (e.target as Element).setPointerCapture?.(e.pointerId);
         setDrag({ kind: 'pan', sx: e.clientX, sy: e.clientY, vx: vb.x, vy: vb.y });
+        setMenu(null);
         select(null);
       }}
       onPointerMove={onPointerMove}
@@ -273,7 +283,8 @@ export default function PcbCanvas() {
               if (e.button !== 0) return;
               if (e.altKey) { disconnectSchPin({ ref: p.ref, name: p.pin }); return; }
               (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
-              setDrag({ kind: 'wire', from: p, x: p.ax, y: p.ay });
+              setMenu(null);
+              setDrag({ kind: 'wire', from: p, x: p.ax, y: p.ay, sx: e.clientX, sy: e.clientY });
             }}
             onPointerEnter={() => net && setHoverNet(net)}
             onPointerLeave={() => setHoverNet(null)}
@@ -311,5 +322,13 @@ export default function PcbCanvas() {
       <text x={-1.6} y={board.height / 2} className="dim-label" textAnchor="middle" fontSize={1.6} transform={`rotate(-90 ${-1.6} ${board.height / 2})`}>{board.height} mm</text>
       {hoverNet && <text x={board.width} y={board.height + 3} className="dim-label" textAnchor="end" fontSize={1.6}>{tr('canvas.net', { net: hoverNet })}</text>}
     </svg>
+    {menu && (
+      <PinMenu
+        x={menu.x} y={menu.y} pin={`${menu.pad.ref}.${menu.pad.pin}`} net={pinNet.get(`${menu.pad.ref}.${menu.pad.num}`)}
+        onDisconnect={() => disconnectSchPin({ ref: menu.pad.ref, name: menu.pad.pin })}
+        onClose={closeMenu}
+      />
+    )}
+    </>
   );
 }

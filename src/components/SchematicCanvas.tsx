@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store';
 import { t, useT } from '../i18n';
 import { partName } from '../lib/library.i18n';
@@ -7,6 +7,7 @@ import { useRefitOnShow } from './useRefitOnShow';
 import { getDef } from '../lib/library';
 import { symbolFor, xformPoint, type Dir } from '../lib/symbols';
 import { absBody, labelPlacement, layoutSchematic, routeSchematic, type AbsPin } from '../lib/schematic';
+import PinMenu from './PinMenu';
 import type { SchPos } from '../types';
 
 const INK = '#2b2f36';
@@ -17,6 +18,8 @@ const SEL = '#c46a00';
 const DIRV: Record<Dir, [number, number]> = { l: [-1, 0], r: [1, 0], u: [0, -1], d: [0, 1] };
 /** 핀을 잡거나 놓을 때 인정하는 거리 (회로도 단위) */
 const PIN_SNAP = 1.2;
+/** 이만큼(화면 px) 안 움직이고 떼면 탭으로 본다 */
+const TAP_PX = 8;
 
 /** 전원/접지 기호 */
 function PowerSymbol({ kind, net, x, y, dir, color }: { kind: string; net: string; x: number; y: number; dir: Dir; color: string }) {
@@ -64,10 +67,11 @@ export default function SchematicCanvas() {
   const [drag, setDrag] = useState<
     | { kind: 'part'; ref: string; dx: number; dy: number; pos: SchPos }
     | { kind: 'pan'; sx: number; sy: number; vx: number; vy: number }
-    | { kind: 'wire'; from: AbsPin; x: number; y: number }
+    | { kind: 'wire'; from: AbsPin; x: number; y: number; sx: number; sy: number }
     | null
   >(null);
   const [hoverNet, setHoverNet] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; pin: AbsPin } | null>(null);
 
   const basePos = useMemo(() => layoutSchematic(project.parts, project.nets, project.sch ?? {}), [project.parts, project.nets, project.sch]);
   const pos = useMemo(() => (drag?.kind === 'part' ? { ...basePos, [drag.ref]: drag.pos } : basePos), [basePos, drag]);
@@ -115,6 +119,7 @@ export default function SchematicCanvas() {
   const pinch = usePinchZoom(toSvg, setVb, () => setDrag(null));
 
   const onWheel = (e: React.WheelEvent) => {
+    setMenu(null);
     const p = toSvg(e);
     const k = Math.exp(e.deltaY * 0.0015);
     setVb((v) => {
@@ -141,10 +146,12 @@ export default function SchematicCanvas() {
       if (x !== drag.pos.x || y !== drag.pos.y) setDrag({ ...drag, pos: { ...drag.pos, x, y } });
     }
   };
-  const onPointerUp = () => {
+  const onPointerUp = (e: React.PointerEvent) => {
     if (drag?.kind === 'wire') {
       const target = pinAt(drag.x, drag.y, drag.from);
       if (target) connectSchPins({ ref: drag.from.ref, name: drag.from.name }, { ref: target.ref, name: target.name });
+      // 끌지 않고 눌렀다 떼면(탭) 핀 메뉴 — 터치 화면에서 연결 끊기
+      else if (Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < TAP_PX) setMenu({ x: e.clientX, y: e.clientY, pin: drag.from });
     }
     if (drag?.kind === 'part') {
       const orig = basePos[drag.ref];
@@ -166,10 +173,13 @@ export default function SchematicCanvas() {
   };
   const wireTarget = drag?.kind === 'wire' ? pinAt(drag.x, drag.y, drag.from) : null;
 
+  const closeMenu = useCallback(() => setMenu(null), []);
+
   const netColor = (net?: string) => (hoverNet && net === hoverNet ? HILITE : WIRE);
   const connectedPins = new Set(route.pins.filter((p) => p.net).map((p) => `${p.ref}.${p.name}`));
 
   return (
+    <>
     <svg
       ref={svgRef}
       className="sch-canvas"
@@ -180,6 +190,7 @@ export default function SchematicCanvas() {
         if (e.button !== 0 && e.button !== 1) return;
         (e.target as Element).setPointerCapture?.(e.pointerId);
         setDrag({ kind: 'pan', sx: e.clientX, sy: e.clientY, vx: vb.x, vy: vb.y });
+        setMenu(null);
         select(null);
       }}
       onPointerMove={onPointerMove}
@@ -288,7 +299,8 @@ export default function SchematicCanvas() {
               if (e.button !== 0) return;
               if (e.altKey) { disconnectSchPin({ ref: p.ref, name: p.name }); return; }
               (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
-              setDrag({ kind: 'wire', from: p, x: p.x, y: p.y });
+              setMenu(null);
+              setDrag({ kind: 'wire', from: p, x: p.x, y: p.y, sx: e.clientX, sy: e.clientY });
             }}
             onPointerEnter={() => p.net && setHoverNet(p.net)}
             onPointerLeave={() => setHoverNet(null)}
@@ -318,5 +330,13 @@ export default function SchematicCanvas() {
 
       {hoverNet && <text x={vb.x + vb.w - 1} y={vb.y + vb.h - 1} fontSize={vb.w / 60} textAnchor="end" fill={HILITE} className="sch-text bold">{tr('canvas.net', { net: hoverNet })}</text>}
     </svg>
+    {menu && (
+      <PinMenu
+        x={menu.x} y={menu.y} pin={`${menu.pin.ref}.${menu.pin.name}`} net={menu.pin.net}
+        onDisconnect={() => disconnectSchPin({ ref: menu.pin.ref, name: menu.pin.name })}
+        onClose={closeMenu}
+      />
+    )}
+    </>
   );
 }
