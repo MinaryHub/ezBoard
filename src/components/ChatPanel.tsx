@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
-import { askAi, PROVIDERS } from '../lib/ai';
+import { askAi, isConnected, PROVIDERS, usesAccount } from '../lib/ai';
 import { getExamples } from '../lib/examples';
 import { useLang, useT, type TKey } from '../i18n';
 import { renderMarkdown } from '../lib/markdown';
@@ -26,7 +26,7 @@ export default function ChatPanel({ onOpenSettings, onCircuit }: { onOpenSetting
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages, busy]);
 
-  const hasKey = !!settings.keys[settings.provider]?.trim();
+  const hasKey = isConnected(settings);
 
   const send = async (text: string) => {
     const content = text.trim();
@@ -72,7 +72,7 @@ export default function ChatPanel({ onOpenSettings, onCircuit }: { onOpenSetting
         <div className="spacer" />
         <select value={settings.provider} onChange={(e) => setSettings({ ...settings, provider: e.target.value as Provider })} data-tip={t('tip.provider')}>
           {(Object.keys(PROVIDERS) as Provider[]).map((p) => (
-            <option key={p} value={p}>{PROVIDERS[p].short}{settings.keys[p] ? '' : t('chat.noKey')}</option>
+            <option key={p} value={p}>{PROVIDERS[p].short}{usesAccount(settings, p) ? t('chat.account') : isConnected(settings, p) ? '' : t('chat.noKey')}</option>
           ))}
         </select>
         {messages.length > 0 && <button className="ghost small" onClick={clearChat} data-tip={t('tip.clearChat')} aria-label="clear"><Icon name="trash" size={14} /></button>}

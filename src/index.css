@@ -313,6 +313,12 @@ code, kbd {
 .provider-head input { accent-color: var(--accent); height: auto; }
 .provider-head a { margin-left: auto; color: var(--accent); font-size: 11px; text-decoration: none; font-weight: 400; }
 .status { margin-top: 4px; color: var(--text-dim); }
+.auth-seg { margin: 8px 0 2px; }
+.auth-seg button:disabled { opacity: .45; cursor: not-allowed; }
+.provider-card .status .spacer { flex: 1; }
+.account-help ol { margin: 4px 0 0; padding-left: 18px; }
+.account-help li { margin: 3px 0; }
+.account-help code { user-select: all; word-break: break-all; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 14px; }
 .set-row { display: grid; grid-template-columns: 70px 1fr; align-items: center; gap: 8px; margin: 6px 0; }
 

@@ -30,6 +30,8 @@ npm run dev     # http://localhost:5173
 
 API 키는 브라우저 localStorage에만 저장되고 각 AI 회사 API로 직접 전송됩니다.
 
+데스크톱 앱에서는 API 키 대신 **로그인한 계정**으로도 연결할 수 있습니다 (⚙️ 설정 ▸ 각 AI ▸ "로그인한 계정"). 이 컴퓨터에 설치·로그인된 공식 CLI를 대신 실행합니다: Claude → Claude Code(`claude`), GPT → Codex CLI(`codex login`), Gemini → Gemini CLI(`gemini`). 빈 임시 폴더에서 도구 없이 실행되어 파일을 읽거나 고치지 않습니다 (`electron/cli-ai.cjs`).
+
 ## 엔진 테스트
 ```bash
 npm run test:engine

@@ -25,6 +25,8 @@ const defaultSettings: AiSettings = {
   provider: 'claude',
   keys: { claude: '', gemini: '', openai: '' },
   models: { claude: PROVIDERS.claude.defaultModel, gemini: PROVIDERS.gemini.defaultModel, openai: PROVIDERS.openai.defaultModel },
+  auth: { claude: 'key', gemini: 'key', openai: 'key' },
+  cliModels: { claude: '', gemini: '', openai: '' },
 };
 
 export type ViewMode = 'edit' | 'real';

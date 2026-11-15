@@ -15,6 +15,10 @@ interface EzboardBridge {
   onProgress(cb: (p: { received: number; total: number }) => void): () => void;
   openDownloaded(path: string): Promise<void>;
   openExternal(url: string): Promise<void>;
+  /** 로그인한 계정(공식 CLI) 상태 */
+  cliStatus(provider: string): Promise<{ installed: boolean; loggedIn: boolean; detail?: string }>;
+  /** 로그인한 계정(공식 CLI)으로 질문 */
+  cliAsk(provider: string, req: { model?: string; system: string; prompt: string }): Promise<string>;
 }
 
 interface Window {

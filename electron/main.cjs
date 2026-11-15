@@ -3,6 +3,7 @@ const { app, BrowserWindow, shell, session, Menu, ipcMain, net } = require('elec
 const path = require('node:path');
 const fs = require('node:fs');
 const { once } = require('node:events');
+const { registerCliAiHandlers } = require('./cli-ai.cjs');
 
 // file:// 페이지에서 부르는 바깥 API: CORS 응답 헤더를 보정한다
 const AI_HOSTS = ['api.anthropic.com', 'api.openai.com', 'generativelanguage.googleapis.com', 'ezboard-contact.vercel.app'];
@@ -100,6 +101,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
   registerUpdateHandlers();
+  registerCliAiHandlers();
   // file:// 에서 AI API 호출 시 CORS 응답 헤더 보정
   session.defaultSession.webRequest.onHeadersReceived({ urls: AI_HOSTS.map((h) => `https://${h}/*`) }, (details, cb) => {
     const headers = { ...details.responseHeaders };

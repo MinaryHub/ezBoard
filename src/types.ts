@@ -65,4 +65,10 @@ export interface AiSettings {
   provider: Provider;
   keys: Record<Provider, string>;
   models: Record<Provider, string>;
+  /** 연결 방식: API 키 / 로그인한 계정(데스크톱 앱에서 공식 CLI 사용) */
+  auth: Record<Provider, AuthMode>;
+  /** 계정 연결 때 쓸 모델 (비우면 CLI 기본값) */
+  cliModels: Record<Provider, string>;
 }
+
+export type AuthMode = 'key' | 'account';

@@ -1,13 +1,63 @@
-// Claude / Gemini / GPT 대화형 회로 설계. 브라우저에서 각 API를 직접 호출한다.
+// Claude / Gemini / GPT 대화형 회로 설계. 브라우저에서 각 API를 직접 호출하거나,
+// 데스크톱 앱에서는 로그인한 계정(공식 CLI: claude / codex / gemini)으로 부른다.
 import type { AiSettings, ChatMessage, Net, Part, Project, Provider } from '../types';
 import { LIBRARY, librarySummary } from './library';
 import { getLang, t } from '../i18n';
 
-export const PROVIDERS: Record<Provider, { label: string; short: string; keyUrl: string; keyHint: string; defaultModel: string }> = {
-  claude: { label: 'Claude (Anthropic)', short: 'Claude', keyUrl: 'https://console.anthropic.com/settings/keys', keyHint: 'sk-ant-...', defaultModel: 'claude-sonnet-5-5' },
-  gemini: { label: 'Gemini (Google)', short: 'Gemini', keyUrl: 'https://aistudio.google.com/apikey', keyHint: 'AIza...', defaultModel: 'gemini-2.5-pro' },
-  openai: { label: 'GPT (OpenAI)', short: 'GPT', keyUrl: 'https://platform.openai.com/api-keys', keyHint: 'sk-...', defaultModel: 'gpt-5' },
+export const PROVIDERS: Record<Provider, {
+  label: string; short: string; keyUrl: string; keyHint: string; defaultModel: string;
+  /** 로그인 계정 연결에 쓰는 공식 CLI */
+  cli: { name: string; product: string; install: string; login: string; url: string };
+}> = {
+  claude: {
+    label: 'Claude (Anthropic)', short: 'Claude', keyUrl: 'https://console.anthropic.com/settings/keys', keyHint: 'sk-ant-...', defaultModel: 'claude-sonnet-5-5',
+    cli: { name: 'claude', product: 'Claude Code', install: 'curl -fsSL https://claude.ai/install.sh | bash', login: 'claude', url: 'https://docs.claude.com/en/docs/claude-code/setup' },
+  },
+  gemini: {
+    label: 'Gemini (Google)', short: 'Gemini', keyUrl: 'https://aistudio.google.com/apikey', keyHint: 'AIza...', defaultModel: 'gemini-2.5-pro',
+    cli: { name: 'gemini', product: 'Gemini CLI', install: 'npm install -g @google/gemini-cli', login: 'gemini', url: 'https://github.com/google-gemini/gemini-cli' },
+  },
+  openai: {
+    label: 'GPT (OpenAI)', short: 'GPT', keyUrl: 'https://platform.openai.com/api-keys', keyHint: 'sk-...', defaultModel: 'gpt-5',
+    cli: { name: 'codex', product: 'Codex CLI', install: 'npm install -g @openai/codex', login: 'codex login', url: 'https://github.com/openai/codex' },
+  },
 };
+
+/** 로그인 계정 연결은 데스크톱 앱에서만 된다 (프로그램 실행이 필요) */
+export const canUseAccount = () => typeof window !== 'undefined' && !!window.ezboard?.cliAsk;
+
+export const usesAccount = (settings: AiSettings, p: Provider = settings.provider) => settings.auth?.[p] === 'account' && canUseAccount();
+
+/** 이 제공사로 바로 대화할 수 있게 설정되어 있는지 (키가 있거나 계정 연결) */
+export const isConnected = (settings: AiSettings, p: Provider = settings.provider) => usesAccount(settings, p) || !!settings.keys[p]?.trim();
+
+export async function accountStatus(p: Provider) {
+  if (!window.ezboard?.cliStatus) return { installed: false, loggedIn: false };
+  return window.ezboard.cliStatus(p);
+}
+
+/** CLI는 한 번에 글 하나만 받으므로 지난 대화를 한 덩어리로 펼친다 */
+function flattenHistory(history: ChatMessage[]): string {
+  if (history.length === 1) return history[0].content;
+  const turns = history.map((m) => `[${m.role === 'user' ? 'User' : 'ezBoard assistant (you)'}]\n${m.content}`).join('\n\n');
+  return `The conversation so far is below. Reply to the last User message, following the system instructions.\n\n${turns}`;
+}
+
+async function callAccount(settings: AiSettings, system: string, history: ChatMessage[]): Promise<string> {
+  const { provider } = settings;
+  const model = settings.cliModels?.[provider]?.trim() || undefined;
+  try {
+    return await window.ezboard!.cliAsk(provider, { model, system, prompt: flattenHistory(history) });
+  } catch (e) {
+    // ipc 오류는 "Error invoking remote method ...: Error: 원래 메시지" 형태
+    const msg = String((e as Error).message).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+    const cli = PROVIDERS[provider].cli;
+    if (msg.startsWith('NOT_INSTALLED')) throw new Error(t('err.cliMissing', { product: cli.product, install: cli.install }));
+    if (msg === 'timeout') throw new Error(t('err.cliTimeout'));
+    if (/log ?in|auth|unauthori[sz]ed|401|credential/i.test(msg)) throw new Error(t('err.cliLogin', { product: cli.product, login: cli.login, msg }));
+    throw new Error(msg);
+  }
+}
 
 export interface AiCircuit {
   name?: string;
@@ -58,10 +108,11 @@ ${project.parts.length ? JSON.stringify(current) : '(비어 있음)'}`;
 
 async function callProvider(settings: AiSettings, system: string, messages: ChatMessage[]): Promise<string> {
   const { provider } = settings;
+  const history = messages.filter((m) => !m.error).slice(-20);
+  if (usesAccount(settings)) return callAccount(settings, system, history);
   const key = settings.keys[provider]?.trim();
   const model = settings.models[provider]?.trim() || PROVIDERS[provider].defaultModel;
   if (!key) throw new Error(t('err.noKey', { provider: PROVIDERS[provider].label }));
-  const history = messages.filter((m) => !m.error).slice(-20);
 
   if (provider === 'claude') {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
