@@ -54,6 +54,8 @@ async function callAccount(settings: AiSettings, system: string, history: ChatMe
     const cli = PROVIDERS[provider].cli;
     if (msg.startsWith('NOT_INSTALLED')) throw new Error(t('err.cliMissing', { product: cli.product, install: cli.install }));
     if (msg === 'timeout') throw new Error(t('err.cliTimeout'));
+    const limit = /usage limit|rate limit|quota|upgrade to/i.test(msg) ? msg.split('\n').find((l) => /usage limit|rate limit|quota|upgrade to/i.test(l)) : null;
+    if (limit) throw new Error(t('err.cliLimit', { product: cli.product, msg: limit.replace(/^ERROR:\s*/, '') }));
     if (/log ?in|auth|unauthori[sz]ed|401|credential/i.test(msg)) throw new Error(t('err.cliLogin', { product: cli.product, login: cli.login, msg }));
     throw new Error(msg);
   }

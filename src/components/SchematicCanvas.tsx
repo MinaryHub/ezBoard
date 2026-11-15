@@ -6,7 +6,7 @@ import { usePinchZoom } from './usePinchZoom';
 import { useRefitOnShow } from './useRefitOnShow';
 import { getDef } from '../lib/library';
 import { symbolFor, xformPoint, type Dir } from '../lib/symbols';
-import { absBody, labelPlacement, layoutSchematic, routeSchematic } from '../lib/schematic';
+import { absBody, labelPlacement, layoutSchematic, routeSchematic, type AbsPin } from '../lib/schematic';
 import type { SchPos } from '../types';
 
 const INK = '#2b2f36';
@@ -15,6 +15,8 @@ const WIRE = '#14804a';
 const HILITE = '#266fc9';
 const SEL = '#c46a00';
 const DIRV: Record<Dir, [number, number]> = { l: [-1, 0], r: [1, 0], u: [0, -1], d: [0, 1] };
+/** 핀을 잡거나 놓을 때 인정하는 거리 (회로도 단위) */
+const PIN_SNAP = 1.2;
 
 /** 전원/접지 기호 */
 function PowerSymbol({ kind, net, x, y, dir, color }: { kind: string; net: string; x: number; y: number; dir: Dir; color: string }) {
@@ -55,13 +57,14 @@ function PowerSymbol({ kind, net, x, y, dir, color }: { kind: string; net: strin
 export default function SchematicCanvas() {
   const project = useStore((s) => s.project);
   const selected = useStore((s) => s.selected);
-  const { select, moveSchPart, rotateSchPart, deletePart, undo, redo } = useStore.getState();
+  const { select, moveSchPart, rotateSchPart, deletePart, undo, redo, connectSchPins, disconnectSchPin } = useStore.getState();
   const svgRef = useRef<SVGSVGElement>(null);
   const tr = useT();
   const [vb, setVb] = useState({ x: -40, y: -30, w: 80, h: 60 });
   const [drag, setDrag] = useState<
     | { kind: 'part'; ref: string; dx: number; dy: number; pos: SchPos }
     | { kind: 'pan'; sx: number; sy: number; vx: number; vy: number }
+    | { kind: 'wire'; from: AbsPin; x: number; y: number }
     | null
   >(null);
   const [hoverNet, setHoverNet] = useState<string | null>(null);
@@ -123,6 +126,11 @@ export default function SchematicCanvas() {
 
   const onPointerMove = (e: React.PointerEvent) => {
     if (!drag) return;
+    if (drag.kind === 'wire') {
+      const p = toSvg(e);
+      setDrag({ ...drag, x: p.x, y: p.y });
+      return;
+    }
     if (drag.kind === 'pan') {
       const r = svgRef.current!.getBoundingClientRect();
       const scale = vb.w / r.width;
@@ -134,12 +142,29 @@ export default function SchematicCanvas() {
     }
   };
   const onPointerUp = () => {
+    if (drag?.kind === 'wire') {
+      const target = pinAt(drag.x, drag.y, drag.from);
+      if (target) connectSchPins({ ref: drag.from.ref, name: drag.from.name }, { ref: target.ref, name: target.name });
+    }
     if (drag?.kind === 'part') {
       const orig = basePos[drag.ref];
       if (orig && (orig.x !== drag.pos.x || orig.y !== drag.pos.y)) moveSchPart(drag.ref, drag.pos.x, drag.pos.y, basePos);
     }
     setDrag(null);
   };
+
+  /** 이 위치에서 가장 가까운 핀 (끌기 중 놓을 곳) */
+  const pinAt = (x: number, y: number, except?: AbsPin): AbsPin | null => {
+    let best: AbsPin | null = null;
+    let bd = PIN_SNAP * PIN_SNAP;
+    for (const p of route.pins) {
+      if (except && p.ref === except.ref && p.name === except.name) continue;
+      const d = (p.x - x) ** 2 + (p.y - y) ** 2;
+      if (d < bd) { bd = d; best = p; }
+    }
+    return best;
+  };
+  const wireTarget = drag?.kind === 'wire' ? pinAt(drag.x, drag.y, drag.from) : null;
 
   const netColor = (net?: string) => (hoverNet && net === hoverNet ? HILITE : WIRE);
   const connectedPins = new Set(route.pins.filter((p) => p.net).map((p) => `${p.ref}.${p.name}`));
@@ -249,6 +274,40 @@ export default function SchematicCanvas() {
           </g>
         );
       })}
+
+      {/* 핀 끝: 끌어서 다른 핀에 놓으면 연결, Alt+클릭으로 끊기 */}
+      {route.pins.map((p) => {
+        const isTarget = wireTarget && wireTarget.ref === p.ref && wireTarget.name === p.name;
+        const isFrom = drag?.kind === 'wire' && drag.from.ref === p.ref && drag.from.name === p.name;
+        return (
+          <g
+            key={`h${p.ref}.${p.name}`}
+            className={`sch-pin ${drag?.kind === 'wire' ? 'wiring' : ''} ${isTarget || isFrom ? 'on' : ''}`}
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              if (e.button !== 0) return;
+              if (e.altKey) { disconnectSchPin({ ref: p.ref, name: p.name }); return; }
+              (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+              setDrag({ kind: 'wire', from: p, x: p.x, y: p.y });
+            }}
+            onPointerEnter={() => p.net && setHoverNet(p.net)}
+            onPointerLeave={() => setHoverNet(null)}
+          >
+            <circle cx={p.x} cy={p.y} r={0.9} fill="transparent" />
+            <circle className="dot" cx={p.x} cy={p.y} r={0.38} />
+            <title>{tr('canvas.pinTitle', { pin: `${p.ref}.${p.name}`, net: p.net ? ` · ${p.net}` : '' })}</title>
+          </g>
+        );
+      })}
+
+      {/* 끌고 있는 새 연결 */}
+      {drag?.kind === 'wire' && (
+        <g pointerEvents="none">
+          <line x1={drag.from.x} y1={drag.from.y} x2={wireTarget?.x ?? drag.x} y2={wireTarget?.y ?? drag.y}
+            stroke={wireTarget ? HILITE : SEL} strokeWidth={0.2} strokeDasharray={wireTarget ? undefined : '0.6 0.4'} strokeLinecap="round" />
+          {wireTarget && <circle cx={wireTarget.x} cy={wireTarget.y} r={0.7} fill="none" stroke={HILITE} strokeWidth={0.18} />}
+        </g>
+      )}
 
       {/* 연결 안 된 핀 표시 */}
       {route.pins.filter((p) => !connectedPins.has(`${p.ref}.${p.name}`)).map((p, i) => (

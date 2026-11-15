@@ -404,3 +404,9 @@ code, kbd {
   .chat-input textarea { font-size: 16px; }
   .toast { bottom: 76px; max-width: 90vw; white-space: normal; }
 }
+
+/* 회로도 핀 끝: 평소엔 숨어 있다가 가리키면 보이고, 연결을 끌 때는 모두 보인다 */
+.sch-pin { cursor: crosshair; }
+.sch-pin .dot { fill: #266fc9; opacity: 0; transition: opacity .12s; }
+.sch-pin:hover .dot, .sch-pin.wiring .dot { opacity: .45; }
+.sch-pin.on .dot { opacity: 1; }

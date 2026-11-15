@@ -6,6 +6,7 @@ import { symbolFor } from './lib/symbols';
 import { autoPlace, suggestBoardSize } from './lib/geometry';
 import { autoRoute, type RouteResult } from './lib/router';
 import { circuitToParts, PROVIDERS, type AiCircuit } from './lib/ai';
+import { connectPins, disconnectPin, type PinId } from './lib/connect';
 
 const emptyProject = (): Project => ({ name: t('app.newProject'), board: { width: 50, height: 40 }, parts: [], nets: [], tracks: [], vias: [] });
 
@@ -75,6 +76,8 @@ interface State {
   moveSchPart: (ref: string, x: number, y: number, current: Record<string, SchPos>) => void;
   rotateSchPart: (ref: string) => void;
   relayoutSchematic: () => void;
+  connectSchPins: (a: PinId, b: PinId) => boolean;
+  disconnectSchPin: (p: PinId) => void;
   toggleLayer: (k: keyof State['showLayer']) => void;
   notify: (msg: string) => void;
 }
@@ -205,6 +208,27 @@ export const useStore = create<State>((set, get) => ({
   relayoutSchematic: () => {
     const s = get();
     s.commit({ ...s.project, sch: layoutSchematic(s.project.parts, s.project.nets, {}) });
+  },
+  connectSchPins: (a, b) => {
+    const s = get();
+    const r = connectPins(s.project, a, b);
+    if (!r.ok) {
+      if (r.reason === 'same') s.notify(t('toast.wireSame', { net: r.a! }));
+      if (r.reason === 'short') s.notify(t('toast.wireShort', { a: r.a!, b: r.b! }));
+      return false;
+    }
+    s.commit(r.project);
+    set({ lastRoute: null });
+    s.notify(r.merged ? t('toast.wireMerged', { a: r.merged, b: r.net }) : t('toast.wireAdded', { a: `${a.ref}.${a.name}`, b: `${b.ref}.${b.name}`, net: r.net }));
+    return true;
+  },
+  disconnectSchPin: (pin) => {
+    const s = get();
+    const r = disconnectPin(s.project, pin);
+    if (!r) return;
+    s.commit(r.project);
+    set({ lastRoute: null });
+    s.notify(t('toast.wireRemoved', { pin: `${pin.ref}.${pin.name}`, net: r.net }));
   },
   toggleLayer: (k) => set((s) => ({ showLayer: { ...s.showLayer, [k]: !s.showLayer[k] } })),
   notify: (toast) => {
