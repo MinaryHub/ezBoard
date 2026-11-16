@@ -216,7 +216,7 @@ export function extractCircuit(text: string): { display: string; circuit?: AiCir
 
 export async function askAi(settings: AiSettings, project: Project, messages: ChatMessage[]) {
   const text = await callProvider(settings, systemPrompt(project), messages);
-  return extractCircuit(text);
+  return { ...extractCircuit(text), raw: text };
 }
 
 export function circuitToParts(c: AiCircuit, prev: Part[]): { parts: Part[]; keep: Set<string> } {

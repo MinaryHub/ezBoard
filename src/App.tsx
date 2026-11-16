@@ -34,7 +34,7 @@ export default function App() {
   // 휴대폰 화면에서는 한 번에 한 영역만 보여준다
   const [pane, setPane] = useState<'chat' | 'stage' | 'side'>('chat');
   const fileRef = useRef<HTMLInputElement>(null);
-  const [lastMsg, setLastMsg] = useState('');
+  const lastMsg = useStore((s) => s.lastToast);
   const [helpOpen, setHelpOpen] = useState(false);
   const [dialog, setDialog] = useState<'update' | 'contact' | 'about' | null>(null);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
@@ -57,7 +57,6 @@ export default function App() {
   const openDialog = (d: 'update' | 'contact' | 'about') => { setHelpOpen(false); setDialog(d); };
 
   useEffect(() => { document.documentElement.dataset.appearance = appearance; }, [appearance]);
-  useEffect(() => { if (toast) setLastMsg(toast); }, [toast]);
 
   const issues = useMemo(() => runDrc(project), [project, lang]); // eslint-disable-line react-hooks/exhaustive-deps
   const status = useMemo(() => {

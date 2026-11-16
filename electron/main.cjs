@@ -18,7 +18,7 @@ function registerUpdateHandlers() {
     if (u.protocol !== 'https:' || u.hostname !== 'github.com' || !u.pathname.startsWith(RELEASE_PREFIX)) {
       throw new Error('download source not allowed');
     }
-    if (typeof name !== 'string' || !/^[\w.\-]+$/.test(name)) throw new Error('bad file name');
+    if (typeof name !== 'string' || !/^[\w.-]+$/.test(name)) throw new Error('bad file name');
     const dest = path.join(app.getPath('downloads'), name);
     const part = `${dest}.part`;
     const res = await net.fetch(url, { redirect: 'follow' });

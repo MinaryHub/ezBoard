@@ -1,0 +1,146 @@
+# v* 태그를 올리면 4개 플랫폼 설치 파일을 만들어 "초안(draft)" 릴리스에 올린다.
+# 초안이라 앱의 업데이트 알림에는 아직 안 뜬다. 노트를 다듬고 GitHub에서 "Publish"를 누르면 공개된다.
+#
+# Android 서명에는 저장소 Secrets 4개가 필요하다 (없으면 Android만 건너뛴다):
+#   ANDROID_KEYSTORE_BASE64   base64 android/keystore/ezboard-release.jks
+#   ANDROID_KEYSTORE_PASSWORD keystore.properties의 storePassword
+#   ANDROID_KEY_ALIAS         keystore.properties의 keyAlias
+#   ANDROID_KEY_PASSWORD      keystore.properties의 keyPassword
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (e.g. v1.3.0). It must already exist.'
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: --mac --arm64 --x64
+          - os: windows-latest
+            target: --win --x64
+          - os: ubuntu-latest
+            target: --linux --x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Tag must match package.json version
+        shell: bash
+        run: |
+          v=$(node -p "require('./package.json').version")
+          [ "v$v" = "$TAG" ] || { echo "::error::tag $TAG does not match package.json version $v"; exit 1; }
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - name: Package
+        run: npx electron-builder ${{ matrix.target }} --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.os }}
+          if-no-files-found: error
+          path: |
+            release/*.dmg
+            release/*.exe
+            release/*.AppImage
+            release/*.deb
+
+  android:
+    runs-on: ubuntu-latest
+    env:
+      HAS_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+    steps:
+      - name: No signing key, skipping Android
+        if: env.HAS_KEYSTORE != 'true'
+        run: echo "::warning::ANDROID_KEYSTORE_BASE64 is not set, so no Android build was made."
+      - uses: actions/checkout@v4
+        if: env.HAS_KEYSTORE == 'true'
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-node@v4
+        if: env.HAS_KEYSTORE == 'true'
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/setup-java@v4
+        if: env.HAS_KEYSTORE == 'true'
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Signing key
+        if: env.HAS_KEYSTORE == 'true'
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PW: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PW: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          mkdir -p android/keystore
+          echo "$KEYSTORE" | base64 -d > android/keystore/ezboard-release.jks
+          printf 'storeFile=../keystore/ezboard-release.jks\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' "$STORE_PW" "$ALIAS" "$KEY_PW" > android/keystore.properties
+      - name: Build APK and AAB
+        if: env.HAS_KEYSTORE == 'true'
+        run: |
+          npm ci
+          npm run android:sync
+          cd android && ./gradlew --no-daemon assembleRelease bundleRelease
+      - name: Rename
+        if: env.HAS_KEYSTORE == 'true'
+        run: |
+          v=${TAG#v}
+          mkdir -p out
+          cp android/app/build/outputs/apk/release/app-release.apk "out/ezBoard-$v-android.apk"
+          cp android/app/build/outputs/bundle/release/app-release.aab "out/ezBoard-$v-android-playstore.aab"
+          rm -f android/keystore/ezboard-release.jks android/keystore.properties
+      - uses: actions/upload-artifact@v4
+        if: env.HAS_KEYSTORE == 'true'
+        with:
+          name: android
+          if-no-files-found: error
+          path: out/*
+
+  release:
+    needs: [desktop, android]
+    if: always() && needs.desktop.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          v=${TAG#v}
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            printf '## ezBoard %s\n\n(한국어 릴리스 노트를 쓰세요)\n\n---\n\n## ezBoard %s (English)\n\n(Write the English release notes.)\n' "$v" "$v" > notes.md
+            gh release create "$TAG" dist/* --draft --title "ezBoard $v" --notes-file notes.md
+          fi

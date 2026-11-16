@@ -425,3 +425,7 @@ code, kbd {
 @media (hover: none) {
   .sch-pin .dot { opacity: .35; }
 }
+
+/* 보드 마무리 체크 (GND 채우기, 나사 구멍) */
+.check-row { display: flex; align-items: center; gap: 8px; min-height: 24px; color: var(--text); cursor: pointer; }
+.check-row input { accent-color: var(--accent); width: 14px; height: 14px; margin: 0; }

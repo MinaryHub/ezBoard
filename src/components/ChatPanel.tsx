@@ -4,10 +4,13 @@ import { askAi, isConnected, PROVIDERS, usesAccount } from '../lib/ai';
 import { getExamples } from '../lib/examples';
 import { useLang, useT, type TKey } from '../i18n';
 import { renderMarkdown } from '../lib/markdown';
+import { buildFromCircuit, circuitIssues, fixRequest } from '../lib/build';
 import type { Provider } from '../types';
 import Icon from './Icon';
 
 const SUGGESTIONS: TKey[] = ['chat.s1', 'chat.s2', 'chat.s3', 'chat.s4'];
+/** AI 초안에서 문제가 나오면 고쳐 달라고 다시 묻는 최대 횟수 */
+const MAX_FIX_ROUNDS = 2;
 const isPhone = () => window.matchMedia('(max-width: 760px)').matches;
 
 export default function ChatPanel({ onOpenSettings, onCircuit }: { onOpenSettings: () => void; onCircuit?: () => void }) {
@@ -20,6 +23,7 @@ export default function ChatPanel({ onOpenSettings, onCircuit }: { onOpenSetting
   const examples = getExamples(lang);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  const [phase, setPhase] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -36,9 +40,27 @@ export default function ChatPanel({ onOpenSettings, onCircuit }: { onOpenSetting
     pushMessage({ role: 'user', content });
     setBusy(true);
     try {
-      const all = [...useStore.getState().messages];
-      const res = await askAi(settings, useStore.getState().project, all);
-      let display = res.display || t('chat.made');
+      const base = useStore.getState().project;
+      let convo = [...useStore.getState().messages];
+      let res = await askAi(settings, base, convo);
+      const display0 = res.display;
+      // 자동 점검: 적용하기 전에 회로를 만들어 검사하고, 고칠 수 있는 문제는 AI에게 돌려보낸다
+      const issuesOf = (r: typeof res) => (r.circuit ? circuitIssues(buildFromCircuit(base, r.circuit).project, r.problems) : r.problems);
+      const firstIssues = issuesOf(res);
+      let issues = firstIssues;
+      for (let round = 1; round <= MAX_FIX_ROUNDS && issues.length; round++) {
+        setPhase(t('chat.fixing', { round, n: issues.length }));
+        convo = [...convo, { role: 'assistant', content: res.raw }, { role: 'user', content: fixRequest(issues) }];
+        const next = await askAi(settings, base, convo);
+        if (!next.circuit) break;
+        const nextIssues = issuesOf(next);
+        if (nextIssues.length > issues.length) break;
+        res = next;
+        issues = nextIssues;
+      }
+      const fixed = firstIssues.filter((i) => !issues.includes(i)).length;
+      let display = display0 || res.display || t('chat.made');
+      if (fixed) display += '\n\n' + t('chat.autoFixed', { n: fixed });
       if (res.problems.length) display += '\n\n' + res.problems.map((p) => `- ⚠️ ${p}`).join('\n');
       if (res.circuit) {
         applyCircuit(res.circuit);
@@ -53,6 +75,7 @@ export default function ChatPanel({ onOpenSettings, onCircuit }: { onOpenSetting
       pushMessage({ role: 'assistant', content: t('chat.error', { msg }) + hint, error: true });
     } finally {
       setBusy(false);
+      setPhase(null);
     }
   };
 
@@ -104,7 +127,7 @@ export default function ChatPanel({ onOpenSettings, onCircuit }: { onOpenSetting
               : <div>{m.content}</div>}
           </div>
         ))}
-        {busy && <div className="msg assistant thinking"><span className="dots"><i /><i /><i /></span> {t('chat.thinking')}</div>}
+        {busy && <div className="msg assistant thinking"><span className="dots"><i /><i /><i /></span> {phase ?? t('chat.thinking')}</div>}
       </div>
 
       {messages.length > 0 && project.parts.length > 0 && !busy && (

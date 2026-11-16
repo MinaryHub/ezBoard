@@ -265,6 +265,14 @@ function OrderTab() {
       </div>
       <div className="tip">{t('order.sizeTip')}</div>
 
+      <div className="section-label">{t('order.extras')}</div>
+      <label className="check-row" data-tip={t('tip.pour')}>
+        <input type="checkbox" checked={!!project.pour} onChange={(e) => useStore.getState().setPour(e.target.checked)} />{t('order.pour')}
+      </label>
+      <label className="check-row" data-tip={t('tip.holes')}>
+        <input type="checkbox" checked={!!project.holes} onChange={(e) => useStore.getState().setHoles(e.target.checked)} />{t('order.holes')}
+      </label>
+
       <div className="section-label">{t('order.make')}</div>
       {errors.length > 0 && <div className="issue error static">{t('order.hasErrors', { n: errors.length })}</div>}
       <button

@@ -3,12 +3,15 @@ import { t } from './i18n';
 import type { AiSettings, ChatMessage, Part, Project, SchPos } from './types';
 import { layoutSchematic } from './lib/schematic';
 import { symbolFor } from './lib/symbols';
-import { autoPlace, suggestBoardSize } from './lib/geometry';
+import { autoPlace } from './lib/geometry';
 import { autoRoute, type RouteResult } from './lib/router';
-import { circuitToParts, PROVIDERS, type AiCircuit } from './lib/ai';
+import { PROVIDERS, type AiCircuit } from './lib/ai';
+import { buildFromCircuit } from './lib/build';
 import { connectPins, disconnectPin, type PinId } from './lib/connect';
+import { hitsHole, mountingHoles } from './lib/features';
+import { partBox } from './lib/library';
 
-const emptyProject = (): Project => ({ name: t('app.newProject'), board: { width: 50, height: 40 }, parts: [], nets: [], tracks: [], vias: [] });
+const emptyProject = (): Project => ({ name: t('app.newProject'), board: { width: 50, height: 40 }, parts: [], nets: [], tracks: [], vias: [], pour: true });
 
 function load<T>(key: string, fallback: T): T {
   try {
@@ -48,6 +51,8 @@ interface State {
   showLayer: { top: boolean; bottom: boolean; silk: boolean; ratsnest: boolean };
   lastRoute: RouteResult | null;
   toast: string | null;
+  /** 상태 막대에 남겨 두는 마지막 알림 */
+  lastToast: string;
 
   commit: (p: Project, label?: string) => void;
   undo: () => void;
@@ -63,6 +68,8 @@ interface State {
   runAutoRoute: () => RouteResult;
   clearRoutes: () => void;
   setBoard: (w: number, h: number) => void;
+  setPour: (on: boolean) => void;
+  setHoles: (on: boolean) => void;
   setName: (name: string) => void;
   newProject: () => void;
   loadProject: (p: Project) => void;
@@ -104,6 +111,7 @@ export const useStore = create<State>((set, get) => ({
   showLayer: { top: true, bottom: true, silk: true, ratsnest: true },
   lastRoute: null,
   toast: null,
+  lastToast: '',
 
   commit: (p) => set((s) => ({ project: p, past: [...s.past.slice(-50), s.project], future: [] })),
   undo: () => set((s) => s.past.length ? { project: s.past[s.past.length - 1], past: s.past.slice(0, -1), future: [s.project, ...s.future] } : {}),
@@ -149,23 +157,10 @@ export const useStore = create<State>((set, get) => ({
 
   applyCircuit: (c) => {
     const s = get();
-    const { parts, keep } = circuitToParts(c, s.project.parts);
-    let board = s.project.board;
-    if (c.board?.width && c.board?.height) board = { width: Math.min(200, Math.max(15, c.board.width)), height: Math.min(200, Math.max(15, c.board.height)) };
-    else if (!keep.size) board = suggestBoardSize(parts);
-    const oldSch = Object.fromEntries(Object.entries(s.project.sch ?? {}).filter(([ref]) => keep.has(ref)));
-    const sch = layoutSchematic(parts, c.nets, oldSch);
-    let p: Project = { ...s.project, name: c.name || s.project.name, board, parts, nets: c.nets, tracks: [], vias: [], sch };
-    p = autoPlace(p, keep);
-    // 보드에 다 안 들어가면 키워서 다시 배치
-    for (let i = 0; i < 4 && p.parts.some((x) => x.x > board.width || x.y > board.height); i++) {
-      board = { width: Math.round(board.width * 1.2), height: Math.round(board.height * 1.2) };
-      p = autoPlace({ ...p, board }, keep);
-    }
-    const r = autoRoute(p);
-    p = { ...p, tracks: r.tracks, vias: r.vias };
-    s.commit(p);
-    set({ lastRoute: r, selected: null });
+    const { project, route, grown } = buildFromCircuit(s.project, c);
+    s.commit(project);
+    set({ lastRoute: route, selected: null });
+    if (grown) s.notify(t('toast.boardGrown', { w: project.board.width, h: project.board.height }));
   },
   runAutoPlace: () => {
     const s = get();
@@ -180,6 +175,26 @@ export const useStore = create<State>((set, get) => ({
   },
   clearRoutes: () => { const s = get(); s.commit({ ...s.project, tracks: [], vias: [] }); set({ lastRoute: null }); },
   setBoard: (width, height) => { const s = get(); s.commit({ ...s.project, board: { width, height }, tracks: [], vias: [] }); },
+  setPour: (on) => { const s = get(); s.commit({ ...s.project, pour: on }); },
+  setHoles: (on) => {
+    const s = get();
+    let p: Project = { ...s.project, holes: on };
+    const holes = mountingHoles(p);
+    if (on && !holes.length) s.notify(t('toast.holesSmall'));
+    if (on && holes.length) {
+      // 구멍 자리에 걸린 부품만 다시 배치하고, 배선이 있었다면 구멍을 피해 다시 배선
+      const keep = new Set(p.parts.filter((x) => !hitsHole(holes, partBox(x), 0.5)).map((x) => x.ref));
+      const moved = p.parts.length - keep.size;
+      if (moved) p = autoPlace(p, keep);
+      if (p.tracks.length || moved) {
+        const r = autoRoute({ ...p, tracks: [], vias: [] });
+        p = { ...p, tracks: r.tracks, vias: r.vias };
+        set({ lastRoute: r });
+      }
+      if (moved) s.notify(t('toast.holesMoved', { n: moved }));
+    }
+    s.commit(p);
+  },
   setName: (name) => set((s) => ({ project: { ...s.project, name } })),
   newProject: () => { get().commit(emptyProject()); set({ messages: [], selected: null, lastRoute: null }); },
   loadProject: (p) => { get().commit({ ...emptyProject(), ...p }); set({ selected: null }); },
@@ -233,7 +248,7 @@ export const useStore = create<State>((set, get) => ({
   toggleLayer: (k) => set((s) => ({ showLayer: { ...s.showLayer, [k]: !s.showLayer[k] } })),
   notify: (toast) => {
     clearTimeout(toastTimer);
-    set({ toast });
+    set({ toast, lastToast: toast });
     toastTimer = setTimeout(() => set({ toast: null }), 3500);
   },
 }));

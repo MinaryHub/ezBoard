@@ -3,7 +3,7 @@ import { useEffect, useRef, type RefObject } from 'react';
 /** 캔버스가 숨겨져 있다가(크기 0) 보이게 되거나 크기가 크게 바뀌면 화면 맞추기를 다시 한다 */
 export function useRefitOnShow(ref: RefObject<Element | null>, fit: () => void) {
   const fitRef = useRef(fit);
-  fitRef.current = fit;
+  useEffect(() => { fitRef.current = fit; });
   useEffect(() => {
     const el = ref.current;
     if (!el) return;

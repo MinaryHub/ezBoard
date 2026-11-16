@@ -2,6 +2,7 @@
 import type { Layer, Project, Track, Via } from '../types';
 import { placedPads, type PlacedPad } from './library';
 import { netConnections } from './geometry';
+import { HOLE_KEEP, mountingHoles } from './features';
 
 export const PITCH = 0.635;
 export const TRACK_W = 0.4;
@@ -78,6 +79,14 @@ function routeOnce(project: Project, order: [string, PlacedPad, PlacedPad][]): R
         owner[1][y * W + x] = BLOCKED;
       }
     }
+
+  // 고정 나사 구멍 주변 금지 영역 (나사 머리가 구리에 닿지 않게)
+  for (const [hx, hy] of mountingHoles(project)) {
+    const r = HOLE_KEEP + TRACK_W / 2;
+    for (let y = Math.max(0, Math.floor((hy - r) / PITCH)); y <= Math.min(H - 1, Math.ceil((hy + r) / PITCH)); y++)
+      for (let x = Math.max(0, Math.floor((hx - r) / PITCH)); x <= Math.min(W - 1, Math.ceil((hx + r) / PITCH)); x++)
+        if (Math.hypot(x * PITCH - hx, y * PITCH - hy) <= r) { owner[0][y * W + x] = BLOCKED; owner[1][y * W + x] = BLOCKED; }
+  }
 
   // 패드 주변 영역을 해당 넷 소유로 (다른 넷과 겹치면 금지)
   const claim = (layer: number, i: number, net: number) => {

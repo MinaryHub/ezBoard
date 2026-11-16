@@ -50,6 +50,10 @@ export interface Project {
   tracks: Track[];
   vias: Via[];
   sch?: Record<string, SchPos>;
+  /** 빈 곳을 GND 구리로 채우기 (양면) */
+  pour?: boolean;
+  /** 네 귀퉁이에 M3 고정 나사 구멍 */
+  holes?: boolean;
 }
 
 export interface ChatMessage {

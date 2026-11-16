@@ -1,5 +1,6 @@
 import type { Net, Part, Project } from '../types';
 import { partBox, resolvePin, type PlacedPad } from './library';
+import { hitsHole, mountingHoles } from './features';
 
 export const GRID = 1.27;
 export const snap = (v: number, g = GRID) => Math.round(v / g) * g;
@@ -47,9 +48,11 @@ export function autoPlace(project: Project, keep: Set<string>): Project {
     return (bb.x2 - bb.x1) * (bb.y2 - bb.y1) - (ba.x2 - ba.x1) * (ba.y2 - ba.y1) || degree(b.ref) - degree(a.ref);
   });
 
+  const holes = mountingHoles(project);
   const overlaps = (p: Part) => {
     const b = partBox(p);
     if (b.x1 < margin || b.y1 < margin || b.x2 > board.width - margin || b.y2 > board.height - margin) return true;
+    if (hitsHole(holes, b, 0.5)) return true;
     return placed.some((q) => {
       const c = partBox(q);
       return b.x1 < c.x2 + 1.5 && b.x2 > c.x1 - 1.5 && b.y1 < c.y2 + 1.5 && b.y2 > c.y1 - 1.5;

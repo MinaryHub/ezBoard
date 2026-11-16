@@ -3,8 +3,9 @@ import type { Project } from '../types';
 import { t, type TKey } from '../i18n';
 import { getDef, partBox, placedPads, resolvePin } from './library';
 import { netConnections } from './geometry';
+import { HOLE_KEEP, hitsHole, mountingHoles, pourNet } from './features';
 
-type DrcCode = 'unknownType' | 'offboard' | 'overlap' | 'badPin' | 'singlePin' | 'unused' | 'short' | 'ledNoR' | 'capPolarity' | 'noTracks' | 'unrouted' | 'clearance' | 'ok';
+type DrcCode = 'unknownType' | 'offboard' | 'overlap' | 'badPin' | 'singlePin' | 'unused' | 'short' | 'ledNoR' | 'capPolarity' | 'noTracks' | 'unrouted' | 'clearance' | 'hole' | 'holeCopper' | 'noGndPour' | 'ok';
 const m = (code: DrcCode, vars?: Record<string, string | number>) => ({ code, message: t(`drc.${code}` as TKey, vars) });
 
 export interface DrcIssue {
@@ -71,6 +72,25 @@ export function runDrc(project: Project): DrcIssue[] {
     if (b.x1 < 0 || b.y1 < 0 || b.x2 > board.width || b.y2 > board.height)
       issues.push({ level: 'error', ...m('offboard', { ref: p.ref }), refs: [p.ref] });
   }
+  // 고정 나사 구멍 자리에 부품이나 구리가 있으면 나사가 닿는다
+  const holes = mountingHoles(project);
+  for (const p of parts)
+    if (hitsHole(holes, partBox(p))) issues.push({ level: 'error', ...m('hole', { ref: p.ref }), refs: [p.ref] });
+  if (holes.length) {
+    const near = (x: number, y: number, r: number) => holes.some(([hx, hy]) => Math.hypot(x - hx, y - hy) < HOLE_KEEP + r);
+    const bad = new Set<string>();
+    for (const t of project.tracks) {
+      for (let i = 1; i < t.points.length; i++) {
+        const [a, b] = [t.points[i - 1], t.points[i]];
+        const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 0.2));
+        for (let k = 0; k <= n; k++) if (near(a[0] + ((b[0] - a[0]) * k) / n, a[1] + ((b[1] - a[1]) * k) / n, t.width / 2)) bad.add(t.net);
+      }
+    }
+    for (const v of project.vias) if (near(v.x, v.y, 0.4)) bad.add(v.net);
+    if (bad.size) issues.push({ level: 'error', ...m('holeCopper', { nets: [...bad].join(', ') }) });
+  }
+  if (project.pour && nets.length && !pourNet(project)) issues.push({ level: 'info', ...m('noGndPour') });
+
   for (let i = 0; i < parts.length; i++)
     for (let j = i + 1; j < parts.length; j++) {
       const a = partBox(parts[i]), b = partBox(parts[j]);

@@ -12,11 +12,13 @@ npm run dev     # http://localhost:5173
 
 ## 사용 흐름
 1. **회로 만들기** — 왼쪽 AI 창에 "버튼 누르면 LED 켜지는 회로"처럼 입력 (⚙️에서 API 키 입력). 키 없이 예제로도 체험 가능.
+   - **자동 점검**: AI 초안을 적용하기 전에 검사해서, 없는 핀·합선·연결 안 된 부품·LED 저항 누락이 있으면 AI에게 최대 2번 고쳐 달라고 다시 묻습니다 (`src/lib/build.ts`).
 2. **회로도 확인** — 📐 회로도 화면에서 기호·전선으로 회로를 확인 (끌어서 정리, R/더블클릭 회전, 🧹 자동 정리)
 3. **부품 배치** — 자동 배치 후, 부품을 끌어서 옮기기 (R: 회전, Delete: 삭제)
 4. **배선** — ⚡ 자동 배선 (2층 A* 라우터, 전원선은 굵게)
 5. **검사** — 겹침, 보드 밖, 미배선, 구리 간격, LED 저항 누락 등 초보자 실수 검사
 6. **주문 파일** — 거버(RS-274X) + 드릴 + BOM zip → JLCPCB/PCBWay에 업로드
+   - **보드 마무리**(주문 탭): GND 구리 채우기(양면, 다른 넷과 0.5mm, 열 차단 다리)와 M3 고정 나사 구멍 4개(`ezboard-NPTH.drl`). 배선이 막히면 보드를 100mm까지 조금씩 키워 다시 시도합니다.
 
 ## 구조
 - `src/lib/library.ts` 부품 라이브러리·풋프린트 (스루홀 위주)
@@ -25,6 +27,8 @@ npm run dev     # http://localhost:5173
 - `src/lib/router.ts` 자동 배선기
 - `src/lib/symbols.ts`, `schematic.ts` 회로도 기호, 자동 배치, 직각 전선 배선
 - `src/lib/drc.ts` 설계 규칙 검사
+- `src/lib/build.ts` AI 회로 → 배치·배선 (적용과 자동 점검이 함께 씀)
+- `src/lib/features.ts` GND 구리 채우기, 고정 나사 구멍
 - `src/lib/gerber.ts`, `font.ts` 거버/드릴/BOM 생성
 - `src/components/*` UI (채팅, PCB 캔버스, 오른쪽 패널, 설정)
 
@@ -32,9 +36,10 @@ API 키는 브라우저 localStorage에만 저장되고 각 AI 회사 API로 직
 
 데스크톱 앱에서는 API 키 대신 **로그인한 계정**으로도 연결할 수 있습니다 (⚙️ 설정 ▸ 각 AI ▸ "로그인한 계정"). 이 컴퓨터에 설치·로그인된 공식 CLI를 대신 실행합니다: Claude → Claude Code(`claude`), GPT → Codex CLI(`codex login`), Gemini → Gemini CLI(`gemini`). 빈 임시 폴더에서 도구 없이 실행되어 파일을 읽거나 고치지 않습니다 (`electron/cli-ai.cjs`).
 
-## 엔진 테스트
+## 테스트
 ```bash
-npm run test:engine
+npm test                      # 엔진 테스트 (예제·부하 회로 배선, 검사, 거버, 자동 점검)
+npm run test:engine           # 예제별 배선 결과를 눈으로 보기
 npx tsx scripts/sch-user.ts   # 회로도 배치/배선 품질 측정
 ```
 
@@ -47,7 +52,8 @@ npx tsx scripts/sch-user.ts   # 회로도 배치/배선 품질 측정
 | Linux x64 | `npm run dist:linux` | `release/ezBoard-<버전>-linux-x86_64.AppImage`, `-linux-amd64.deb` |
 | Android | `npm run android:apk` | `android/app/build/outputs/apk/release/app-release.apk` (+ `bundle/release/app-release.aab`) |
 
-- 데스크톱은 Electron, 안드로이드는 Capacitor로 같은 웹 앱을 감쌉니다. 모두 이 Mac에서 빌드됩니다.
+- 데스크톱은 Electron, 안드로이드는 Capacitor로 같은 웹 앱을 감쌉니다.
+- **자동 빌드 (GitHub Actions)**: `package.json` 버전과 같은 `v*` 태그를 올리면 `.github/workflows/release.yml`이 macOS·Windows·Linux(·Android) 설치 파일과 `SHA256SUMS.txt`를 만들어 **초안(draft) 릴리스**에 올립니다. 노트를 다듬고 GitHub에서 Publish를 눌러야 앱의 업데이트 알림에 뜹니다. Android 서명은 저장소 Secrets(`ANDROID_KEYSTORE_BASE64` 등 4개, 워크플로 파일 맨 위 설명)가 있을 때만 합니다. 푸시·PR마다 `ci.yml`이 빌드·린트·테스트를 돌립니다.
 - 안드로이드 빌드에는 JDK 21이 필요합니다: `export JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home`
 - **안드로이드 서명 키**: `android/keystore/ezboard-release.jks` 와 `android/keystore.properties`(비밀번호). git에 올리지 않으며, **잃어버리면 같은 앱으로 업데이트를 낼 수 없으니 반드시 따로 백업하세요.**
 - **macOS**: Apple 개발자 인증서가 없어 임시(ad-hoc) 서명만 되어 있습니다. 다른 Mac에서 처음 열 때 "확인되지 않은 개발자" 경고가 나오면 앱을 우클릭 → 열기. 정식 배포하려면 Developer ID 서명과 공증(notarization)이 필요합니다.

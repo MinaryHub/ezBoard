@@ -10,6 +10,7 @@ import { textStrokes } from '../lib/font';
 import { refLabelPos } from '../lib/gerber';
 import { VIA_D, VIA_DRILL } from '../lib/router';
 import PinMenu from './PinMenu';
+import { MountingHoles, PourLayer } from './PourLayer';
 
 type Drag =
   | { kind: 'part'; ref: string; dx: number; dy: number; moved: boolean }
@@ -195,6 +196,11 @@ export default function PcbCanvas() {
       <rect x={0} y={0} width={board.width} height={board.height} rx={real ? 1 : 0} fill={colors.board} stroke={colors.edge} strokeWidth={0.2} filter={real ? 'url(#shadow)' : undefined} />
       {!real && <rect x={0} y={0} width={board.width} height={board.height} fill="url(#grid)" pointerEvents="none" />}
 
+      {/* GND 구리 채우기 */}
+      {(['bottom', 'top'] as const).map((layer) => show[layer] && (
+        <PourLayer key={`pour-${layer}`} project={project} side={layer} color={real ? '#2f9a5a' : colors[layer]} opacity={real ? (layer === 'top' ? 0.6 : 0) : layer === 'top' ? 0.26 : 0.22} />
+      ))}
+
       {/* 배선 */}
       {(['bottom', 'top'] as const).map((layer) =>
         show[layer] && project.tracks.filter((t) => t.layer === layer).map((t, i) => (
@@ -221,6 +227,8 @@ export default function PcbCanvas() {
           <circle cx={v.x} cy={v.y} r={VIA_DRILL / 2} fill={colors.hole} />
         </g>
       ))}
+
+      <MountingHoles project={project} hole={colors.hole} real={real} label={tr('canvas.hole')} />
 
       {/* 부품 */}
       {project.parts.map((part) => {
