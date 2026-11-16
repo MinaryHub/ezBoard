@@ -120,6 +120,9 @@ code, kbd {
 .menubar { display: flex; align-items: center; gap: 2px; height: 34px; padding: 0 8px; background: var(--sunken); flex-shrink: 0; }
 .brand { display: flex; align-items: center; gap: 7px; font-weight: 700; font-size: 13px; margin-right: 10px; }
 .brand img { width: 20px; height: 20px; }
+.brand .version { height: 18px; padding: 0 5px; font-family: var(--mono); font-size: 10.5px; font-weight: 400; color: var(--text-faint); border-radius: 3px; }
+.brand .version:hover:not(:disabled) { color: var(--text-dim); background: var(--raised); }
+.menu-ver { margin-left: auto; padding-left: 12px; font-family: var(--mono); font-size: 10.5px; color: var(--text-faint); }
 .doc-tab { display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 4px 0 10px; background: var(--base); border-radius: var(--radius); margin: 0 8px; }
 .doc-tab input { background: transparent; height: 22px; padding: 0 2px; width: 150px; font-weight: 500; }
 .doc-tab .dirty { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-right: 6px; }
@@ -380,7 +383,7 @@ code, kbd {
 }
 @media (max-width: 760px) {
   .menubar { height: 40px; }
-  .brand span.name { display: none; }
+  .brand span.name, .brand .version { display: none; }
   .doc-tab { flex: 1; min-width: 0; margin: 0 4px; }
   .doc-tab input { width: 100%; }
   .menubar .spacer { display: none; }

@@ -9,7 +9,7 @@ import Tooltip from './components/Tooltip';
 import Icon, { type IconName } from './components/Icon';
 import { AboutDialog, ContactDialog, UpdateDialog } from './components/HelpDialogs';
 import { autoCheck, type UpdateInfo } from './lib/update';
-import { SPONSORS_URL, openExternal } from './lib/meta';
+import { APP_VERSION, SPONSORS_URL, openExternal } from './lib/meta';
 import { runDrc, unroutedCount } from './lib/drc';
 import type { Project } from './types';
 import { saveFile } from './lib/platform';
@@ -114,7 +114,10 @@ export default function App() {
     <div className="app">
       {/* ── 메뉴 막대 ── */}
       <header className="menubar">
-        <div className="brand"><img src="./logo-mark.svg" alt="" /><span className="name">ezBoard</span></div>
+        <div className="brand">
+          <img src="./logo-mark.svg" alt="" /><span className="name">ezBoard</span>
+          <button className="ghost version" onClick={() => setDialog('about')} data-tip={t('tip.version', { v: APP_VERSION })}>v{APP_VERSION}</button>
+        </div>
         <button className="ghost mi" onClick={() => { if (!project.parts.length || confirm(t('top.confirmNew'))) st.newProject(); }} data-tip={t('tip.new')}><Icon name="new" size={16} /><span className="lbl">{t('top.new')}</span></button>
         <button className="ghost mi" onClick={() => fileRef.current?.click()} data-tip={t('tip.open')}><Icon name="open" size={16} /><span className="lbl">{t('top.open')}</span></button>
         <button className="ghost mi" onClick={saveProject} data-tip={t('tip.save')}><Icon name="save" size={16} /><span className="lbl">{t('top.save')}</span></button>
@@ -128,7 +131,7 @@ export default function App() {
               <button role="menuitem" onClick={() => openDialog('contact')}><Icon name="chat" size={15} />{t('help.contact')}</button>
               <button role="menuitem" onClick={() => { setHelpOpen(false); openExternal(SPONSORS_URL); }}><Icon name="heart" size={15} />{t('help.sponsor')}</button>
               <div className="menu-sep" />
-              <button role="menuitem" onClick={() => openDialog('about')}><Icon name="help" size={15} />{t('help.about')}</button>
+              <button role="menuitem" onClick={() => openDialog('about')}><Icon name="help" size={15} />{t('help.about')}<span className="menu-ver">v{APP_VERSION}</span></button>
             </div>
           )}
         </div>
