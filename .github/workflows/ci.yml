@@ -18,7 +18,8 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      # npm ci는 Mac에서 만든 lock 파일에 없는 Linux/Windows 전용 선택 패키지(@emnapi 등) 때문에 실패해서 install을 쓴다
+      - run: npm install --no-audit --no-fund
       - run: npm run build
       - run: npm run lint
       - run: npm test

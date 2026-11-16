@@ -49,7 +49,8 @@ jobs:
         run: |
           v=$(node -p "require('./package.json').version")
           [ "v$v" = "$TAG" ] || { echo "::error::tag $TAG does not match package.json version $v"; exit 1; }
-      - run: npm ci
+      # npm ci는 Mac에서 만든 lock 파일에 없는 Linux/Windows 전용 선택 패키지(@emnapi 등) 때문에 실패해서 install을 쓴다
+      - run: npm install --no-audit --no-fund
       - run: npm test
       - run: npm run build
       - name: Package
@@ -102,7 +103,7 @@ jobs:
       - name: Build APK and AAB
         if: env.HAS_KEYSTORE == 'true'
         run: |
-          npm ci
+          npm install --no-audit --no-fund
           npm run android:sync
           cd android && ./gradlew --no-daemon assembleRelease bundleRelease
       - name: Rename
