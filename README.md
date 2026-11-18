@@ -64,7 +64,8 @@ npx tsx scripts/sch-user.ts   # 회로도 배치/배선 품질 측정
 ## 도움말 메뉴: 업데이트 · 문의 · 후원
 
 - **업데이트 확인**: 시작할 때 하루 한 번, 그리고 도움말 ▸ 업데이트 확인에서 `MinaryHub/ezBoard`의 최신 GitHub 릴리스를 확인합니다 (Kreate와 같은 방식, 공개 저장소라 로그인 없이 읽음). 새 버전이 있으면 바뀐 점을 보여주고,
-  - 데스크톱: 운영체제에 맞는 설치 파일을 받아 엽니다 (Windows는 설치 프로그램 실행 후 앱 종료, macOS는 디스크 이미지, Linux는 AppImage 폴더 열기). 이 저장소 릴리스 주소에서만 받습니다.
+  - **자동 업데이트 (Windows 설치판, Linux AppImage, 1.3.1부터)**: `electron-updater`가 새 버전을 뒤에서 받아 두고, 상태 막대의 "업데이트 준비됨 · 다시 시작"을 누르거나 앱을 끌 때 설치합니다 (`electron/auto-update.cjs`). ⚙️ 설정 ▸ 업데이트에서 끌 수 있습니다. 릴리스에 `latest.yml`, `latest-linux.yml`, `.exe.blockmap`이 함께 있어야 하며, 자동 빌드(`release.yml`)가 올립니다.
+  - 그 밖의 데스크톱(macOS, Linux .deb): 운영체제에 맞는 설치 파일을 받아 엽니다 (macOS는 디스크 이미지, Linux는 파일 폴더 열기). 이 저장소 릴리스 주소에서만 받습니다. macOS 자동 교체에는 Apple Developer ID 서명이 필요합니다.
   - 안드로이드: 브라우저로 APK를 내려받게 합니다.
   - 릴리스 파일 이름 규칙 `ezBoard-<버전>-<플랫폼>.<확장자>`를 지켜야 맞는 파일을 고릅니다.
   - 시험: `localStorage.setItem('ezboard.debugVersion', '1.0.0')` 으로 예전 버전인 척할 수 있습니다.

@@ -338,6 +338,7 @@ code, kbd {
 .menu-badge { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--info); background: var(--info-wash); padding: 0 5px; border-radius: 3px; }
 .update-badge { height: 18px; padding: 0 7px; gap: 4px; font-size: 11px; color: var(--info); background: var(--info-wash); border-radius: 3px; }
 .update-badge:hover:not(:disabled) { background: var(--info-wash); filter: brightness(1.2); }
+.update-badge.ready { color: var(--text); background: var(--info-wash); box-shadow: inset 0 0 0 1px var(--info); }
 
 /* 업데이트·문의 창 */
 .upd-head { margin: 4px 0 2px; }

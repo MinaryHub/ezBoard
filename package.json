@@ -66,6 +66,14 @@
       "package.json"
     ],
     "asar": true,
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "MinaryHub",
+        "repo": "ezBoard",
+        "releaseType": "release"
+      }
+    ],
     "mac": {
       "target": [
         "dmg"
@@ -113,5 +121,7 @@
     }
   },
   "desktopName": "ezboard.desktop",
-  "dependencies": {}
+  "dependencies": {
+    "electron-updater": "6.8.11"
+  }
 }

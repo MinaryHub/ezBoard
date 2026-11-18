@@ -4,12 +4,16 @@ import { accountStatus, canUseAccount, listModels, PROVIDERS } from '../lib/ai';
 import { useLang, useT } from '../i18n';
 import type { AuthMode, Provider } from '../types';
 import Icon from './Icon';
+import { useAutoUpdate } from '../lib/autoupdate';
 
 export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const settings = useStore((s) => s.settings);
   const setSettings = useStore((s) => s.setSettings);
   const { lang, setLang } = useLang();
   const appearance = useStore((s) => s.appearance);
+  const autoSupported = useAutoUpdate((s) => s.supported);
+  const autoEnabled = useAutoUpdate((s) => s.enabled);
+  const setAutoEnabled = useAutoUpdate((s) => s.setEnabled);
   const setAppearance = useStore((s) => s.setAppearance);
   const t = useT();
   const [draft, setDraft] = useState(settings);
@@ -72,6 +76,14 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
             <button className={appearance === 'light' ? 'active' : ''} onClick={() => setAppearance('light')}><Icon name="sun" size={14} />{t('set.light')}</button>
           </div>
         </div>
+        {autoSupported && (
+          <div className="set-row" data-tip={t('tip.autoUpdate')}>
+            <span className="muted">{t('set.update')}</span>
+            <label className="check-row">
+              <input type="checkbox" checked={autoEnabled} onChange={(e) => setAutoEnabled(e.target.checked)} />{t('set.autoUpdate')}
+            </label>
+          </div>
+        )}
         {(Object.keys(PROVIDERS) as Provider[]).map((p) => (
           <div key={p} className={`provider-card ${draft.provider === p ? 'active' : ''}`}>
             <label className="provider-head">

@@ -5,6 +5,7 @@ import Icon from './Icon';
 import { renderMarkdown } from '../lib/markdown';
 import { APP_VERSION, CONTACT_URL, REPO_URL, SPONSORS_URL, openExternal, platform } from '../lib/meta';
 import { checkForUpdate, currentVersion, skipVersion, type UpdateInfo } from '../lib/update';
+import { checkNow, installNow, useAutoUpdate } from '../lib/autoupdate';
 
 function Modal({ title, icon, onClose, children, width = 520 }: { title: string; icon: Parameters<typeof Icon>[0]['name']; onClose: () => void; children: React.ReactNode; width?: number }) {
   useEffect(() => {
@@ -52,6 +53,11 @@ export function UpdateDialog({ onClose, initial }: { onClose: () => void; initia
   const lang = useLang((s) => s.lang);
   const [st, setSt] = useState<UpdState>(initial ? { s: 'available', info: initial } : { s: 'checking' });
   const { os } = platform();
+  // Windows 설치판·Linux AppImage: 앱이 뒤에서 받아 두고 다시 시작할 때 설치한다
+  const autoOk = useAutoUpdate((s) => s.supported);
+  const auto = useAutoUpdate((s) => s.state);
+  const autoReady = autoOk && auto.status === 'ready';
+  const autoGetting = autoOk && (auto.status === 'downloading' || auto.status === 'checking');
 
   useEffect(() => {
     if (initial) return;
@@ -63,6 +69,7 @@ export function UpdateDialog({ onClose, initial }: { onClose: () => void; initia
   }, [initial]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const download = async (info: UpdateInfo) => {
+    if (autoOk) { void checkNow(); return; }
     const asset = info.asset;
     if (!asset) { openExternal(info.page); return; }
     if (os === 'android' || !window.ezboard) { openExternal(asset.url); return; }
@@ -100,19 +107,33 @@ export function UpdateDialog({ onClose, initial }: { onClose: () => void; initia
             </div>
           )}
           {st.s === 'downloaded' && <p className="tip">{readyText}</p>}
+          {autoGetting && (
+            <div className="progress">
+              <div className="bar"><i style={{ width: `${auto.total ? Math.min(100, ((auto.received ?? 0) / auto.total) * 100) : 0}%` }} /></div>
+              <span className="num small">{auto.total ? t('upd.downloading', { p: `${mb(auto.received ?? 0)} / ${mb(auto.total)}` }) : t('upd.autoGetting')}</span>
+            </div>
+          )}
+          {autoReady && <p className="tip">{t('upd.readyAuto', { v: auto.version ?? st.info.version })}</p>}
+          {autoOk && auto.status === 'error' && <p className="form-error">{t('upd.autoError', { msg: auto.message ?? '' })}</p>}
           {os === 'android' && st.s === 'available' && <p className="tip">{t('upd.androidHint')}</p>}
           {os === 'web' && st.s === 'available' && <p className="tip">{t('upd.webHint')}</p>}
         </>
       )}
       <div className="modal-actions">
-        {st.s === 'available' && (
+        {autoReady && st.s === 'available' && (
+          <>
+            <button onClick={onClose}>{t('upd.later')}</button>
+            <button className="primary" onClick={() => void installNow()}><Icon name="rotate" size={14} />{t('upd.restart')}</button>
+          </>
+        )}
+        {!autoReady && st.s === 'available' && (
           <>
             <button className="ghost" onClick={() => { skipVersion(st.info.version); onClose(); }}>{t('upd.skip')}</button>
             <span style={{ flex: 1 }} />
             <button onClick={() => openExternal(st.info.page)}>{t('upd.openPage')}</button>
             <button onClick={onClose}>{t('upd.later')}</button>
             {st.info.asset && os !== 'web' && (
-              <button className="primary" onClick={() => download(st.info)}>
+              <button className="primary" disabled={autoGetting} onClick={() => download(st.info)}>
                 {os === 'android' ? t('upd.downloadAndroid') : t('upd.download')}
                 <span className="num small" style={{ opacity: 0.8 }}>{mb(st.info.asset.size)}</span>
               </button>

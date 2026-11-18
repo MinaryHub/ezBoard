@@ -9,6 +9,7 @@ import Tooltip from './components/Tooltip';
 import Icon, { type IconName } from './components/Icon';
 import { AboutDialog, ContactDialog, UpdateDialog } from './components/HelpDialogs';
 import { autoCheck, type UpdateInfo } from './lib/update';
+import { initAutoUpdate, useAutoUpdate } from './lib/autoupdate';
 import { APP_VERSION, SPONSORS_URL, openExternal } from './lib/meta';
 import { runDrc, unroutedCount } from './lib/drc';
 import type { Project } from './types';
@@ -38,11 +39,12 @@ export default function App() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [dialog, setDialog] = useState<'update' | 'contact' | 'about' | null>(null);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const auto = useAutoUpdate((s) => s.state);
   const helpRef = useRef<HTMLDivElement>(null);
 
   // 시작하고 잠시 뒤, 하루에 한 번 조용히 새 버전을 확인한다
   useEffect(() => {
-    const id = setTimeout(() => { autoCheck().then((info) => info && setUpdateInfo(info)); }, 3000);
+    const id = setTimeout(() => { autoCheck().then((info) => info && setUpdateInfo(info)); void initAutoUpdate(); }, 3000);
     return () => clearTimeout(id);
   }, []);
   // 도움말 메뉴: 바깥을 누르거나 Esc로 닫기
@@ -262,7 +264,15 @@ export default function App() {
           <span><kbd>{t('sb.drag')}</kbd>{t('sb.pan')}</span>
         </span>
         <span className="status-msg">{lastMsg || t('sb.ready')}</span>
-        {updateInfo && (
+        {auto.status === 'ready' ? (
+          <button className="update-badge ready" onClick={() => setDialog('update')} data-tip={t('tip.updateReady')}>
+            <Icon name="rotate" size={12} />{t('upd.badgeReady')}
+          </button>
+        ) : auto.status === 'downloading' ? (
+          <button className="update-badge" onClick={() => setDialog('update')} data-tip={t('upd.autoGetting')}>
+            <Icon name="download" size={12} />{t('upd.badgeGetting', { p: auto.total ? Math.floor(((auto.received ?? 0) / auto.total) * 100) : 0 })}
+          </button>
+        ) : updateInfo && (
           <button className="update-badge" onClick={() => setDialog('update')} data-tip={t('tip.updateBadge')}>
             <Icon name="download" size={12} />{t('upd.badge', { v: updateInfo.version })}
           </button>
