@@ -116,7 +116,7 @@ function header(n: number): Footprint {
 function to92(pins: string[]): Footprint {
   const pads = inline(pins, 2.54, 1.6, 0.8);
   const silk: SilkShape[] = [line(-2.4, 1.6, 2.4, 1.6), { kind: 'circle', x: 0, y: 0, r: 2.6 }];
-  return { name: 'TO-92', pads, silk, w: 6.4, h: 6 };
+  return { name: 'TO-92', pads, silk, w: 7, h: 6 };
 }
 
 function to220(pins: string[]): Footprint {
@@ -148,6 +148,23 @@ function nano(): Footprint {
     silk: [...rect(0, 0, 18, 43.2), ...rect(0, -20, 7.6, 6)],
     w: 18.6, h: 44,
   };
+}
+
+/** 두 줄 핀 모듈 (아래쪽에서 본 핀 배치가 아닌, 위에서 본 배치). left/right는 위→아래 순서 */
+function module2(name: string, left: string[], right: string[], rowSpacing: number, bodyW: number, bodyH: number, offsetY = 0): Footprint {
+  const pads: Pad[] = [];
+  const n = left.length;
+  left.forEach((pin, i) => pads.push({ num: i + 1, pin, x: -rowSpacing / 2, y: (i - (n - 1) / 2) * 2.54 + offsetY, w: 1.7, h: 1.7, shape: i === 0 ? 'rect' : 'circle', drill: 1.0 }));
+  // 오른쪽 줄 번호는 아래에서 위로 이어진다 (DIP처럼)
+  const m = right.length;
+  right.forEach((pin, i) => pads.push({ num: n + m - i, pin, x: rowSpacing / 2, y: (i - (m - 1) / 2) * 2.54 + offsetY, w: 1.7, h: 1.7, shape: 'circle', drill: 1.0 }));
+  pads.sort((a, b) => a.num - b.num);
+  return { name, pads, silk: rect(0, 0, bodyW, bodyH), w: bodyW + 0.6, h: bodyH + 0.6 };
+}
+
+/** 이름 붙은 핀 헤더 (모듈 연결용) */
+function namedHeader(pins: string[], name: string): Footprint {
+  return { ...header(pins.length), name, pads: inline(pins, 2.54, 1.7, 1.0) };
 }
 
 const defs: PartDef[] = [
@@ -275,13 +292,110 @@ const defs: PartDef[] = [
     type: 'ldr', name: '조도 센서 (CdS)', category: '입력', prefix: 'R', defaultValue: 'GL5528',
     desc: '빛이 밝으면 저항이 작아지는 센서입니다. 저항 하나와 함께 전압 분배기로 써요.',
     pinHelp: '1, 2 (방향 없음)',
-    footprint: { ...radial('1', '2', 5.08, 2.6), name: 'LDR_5mm' },
+    footprint: { ...radial('1', '2', 5.08, 2.6), name: 'LDR_5mm', w: 7.2 },
   },
   {
     type: 'buzzer', name: '부저', category: '출력', prefix: 'BZ', defaultValue: '능동 5V',
     desc: '소리를 내는 부품입니다. 능동 부저는 전원만 주면 삐- 소리가 나요. +/- 극성이 있습니다.',
     pinHelp: '+ (긴 다리), -',
     footprint: { ...radial('+', '-', 7.62, 6, true), name: 'Buzzer_12mm' },
+  },
+  // ── 모듈 · IC · 연결 부품 ──
+  {
+    type: 'zener', name: '제너 다이오드', category: '기본 부품', prefix: 'D', defaultValue: '5.1V',
+    desc: '거꾸로 연결하면 일정한 전압(예: 5.1V)을 넘지 않게 잡아 줍니다. 입력 보호나 간단한 기준 전압에 써요. 띠가 있는 쪽이 K입니다.',
+    pinHelp: 'A = 애노드, K = 캐소드(띠 표시)',
+    footprint: twoPinAxial('K', 'A', 10.16, 5.6, 2.8, true),
+  },
+  {
+    type: 'crystal', name: '크리스털 (수정 진동자)', category: '기본 부품', prefix: 'Y', defaultValue: '16MHz',
+    desc: 'IC에 정확한 박자(클럭)를 줍니다. 양쪽 핀을 각각 22pF 커패시터로 GND에 연결해요. 방향이 없습니다.',
+    pinHelp: '1, 2 (방향 없음)',
+    footprint: { name: 'Crystal_HC49-U', pads: inline(['1', '2'], 4.88, 1.5, 0.8), silk: rect(0, 0, 11, 4.6), w: 11.6, h: 5.2 },
+  },
+  {
+    type: 'rgb_led', name: 'RGB LED (공통 캐소드)', category: '기본 부품', prefix: 'LED', defaultValue: '5mm RGB',
+    desc: '빨강·초록·파랑을 섞어 여러 색을 내는 LED입니다. 색마다 저항을 따로 달아야 해요. 가장 긴 다리가 공통 K(-)입니다.',
+    pinHelp: 'R, K(가장 긴 다리, 공통 -), G, B',
+    footprint: { name: 'LED_RGB_D5.0mm', pads: inline(['R', 'K', 'G', 'B'], 2.54, 1.6, 0.8), silk: [{ kind: 'circle', x: 0, y: 0, r: 2.9 }], w: 9.4, h: 6.4 },
+  },
+  {
+    type: 'lm317', name: '가변 레귤레이터', category: '전원', prefix: 'U', defaultValue: 'LM317',
+    desc: '저항 2개로 출력 전압을 정하는 레귤레이터입니다 (1.25V~). Vout = 1.25 × (1 + R2/R1). 입력·출력에 커패시터를 달아 주세요.',
+    pinHelp: 'ADJ = 조정, OUT = 출력, IN = 입력',
+    footprint: to220(['ADJ', 'OUT', 'IN']),
+  },
+  {
+    type: 'hc595', name: '시프트 레지스터', category: 'IC', prefix: 'U', defaultValue: '74HC595',
+    desc: '아두이노 핀 3개로 출력 8개를 늘려 줍니다. LED 여러 개를 켤 때 좋아요. 출력마다 LED 저항을 달아 주세요.',
+    pinHelp: 'SER 데이터, SRCLK 시프트 클럭, RCLK 래치, OE(GND에), SRCLR(VCC에), QA~QH 출력, QH\' 다음 칩으로',
+    footprint: dip(['QB', 'QC', 'QD', 'QE', 'QF', 'QG', 'QH', 'GND', "QH'", 'SRCLR', 'SRCLK', 'RCLK', 'OE', 'SER', 'QA', 'VCC']),
+  },
+  {
+    type: 'uln2003', name: '달링턴 드라이버', category: 'IC', prefix: 'U', defaultValue: 'ULN2003A',
+    desc: '작은 신호로 릴레이·스테핑 모터·부저처럼 전류가 큰 부하 7개를 켜 줍니다. 부하는 + 전원과 OUT 사이에 연결하고, 코일 부하면 COM을 + 전원에 이어요.',
+    pinHelp: 'IN1~IN7 입력, OUT1~OUT7 출력(GND 쪽으로 당김), GND, COM(보호 다이오드 공통)',
+    footprint: dip(['IN1', 'IN2', 'IN3', 'IN4', 'IN5', 'IN6', 'IN7', 'GND', 'COM', 'OUT7', 'OUT6', 'OUT5', 'OUT4', 'OUT3', 'OUT2', 'OUT1']),
+  },
+  {
+    type: 'l293d', name: '모터 드라이버', category: 'IC', prefix: 'U', defaultValue: 'L293D',
+    desc: 'DC 모터 2개를 앞뒤로 돌려 줍니다. VCC1은 5V 로직 전원, VCC2는 모터 전원이에요. GND 핀 4개는 모두 GND에 연결하세요.',
+    pinHelp: 'EN1/EN2 켜기, IN1~IN4 방향 입력, OUT1~OUT4 모터, VCC1 로직 5V, VCC2 모터 전원, GND',
+    footprint: dip(['EN1', 'IN1', 'OUT1', 'GND', 'GND', 'OUT2', 'IN2', 'VCC2', 'EN2', 'IN3', 'OUT3', 'GND', 'GND', 'OUT4', 'IN4', 'VCC1']),
+  },
+  {
+    type: 'esp32_devkit', name: 'ESP32 개발 보드', category: '모듈', prefix: 'A', defaultValue: 'ESP32 DevKit V1 (30핀)',
+    desc: 'Wi-Fi와 블루투스가 되는 작은 컴퓨터입니다. 3.3V로 동작하니 5V 신호를 바로 넣지 마세요. 핀 소켓(암 헤더)에 꽂아 써요. 30핀 DOIT DevKit V1 기준이에요.',
+    pinHelp: 'D2~D35 GPIO, VP=GPIO36, VN=GPIO39 (입력 전용), TX2=GPIO17, RX2=GPIO16, TX0/RX0 (USB 시리얼), EN 리셋, VIN 5V 입력, 3V3, GND',
+    footprint: module2('ESP32_DevKit_V1_30pin',
+      ['EN', 'VP', 'VN', 'D34', 'D35', 'D32', 'D33', 'D25', 'D26', 'D27', 'D14', 'D12', 'D13', 'GND', 'VIN'],
+      ['D23', 'D22', 'TX0', 'RX0', 'D21', 'D19', 'D18', 'D5', 'TX2', 'RX2', 'D4', 'D2', 'D15', 'GND', '3V3'],
+      25.4, 28.4, 51.6, 4),
+  },
+  {
+    type: 'pico', name: '라즈베리 파이 피코', category: '모듈', prefix: 'A', defaultValue: 'Raspberry Pi Pico',
+    desc: 'MicroPython이나 C로 프로그래밍하는 작은 보드입니다. 3.3V로 동작해요. USB(VBUS 5V)나 VSYS로 전원을 넣고, 핀 소켓에 꽂아 써요.',
+    pinHelp: 'GP0~GP22, GP26~GP28 (GP26~28은 아날로그 입력), VBUS 5V(USB), VSYS 전원 입력, 3V3 출력, 3V3_EN, RUN 리셋, ADC_VREF, AGND, GND',
+    footprint: module2('RaspberryPi_Pico',
+      ['GP0', 'GP1', 'GND', 'GP2', 'GP3', 'GP4', 'GP5', 'GND', 'GP6', 'GP7', 'GP8', 'GP9', 'GND', 'GP10', 'GP11', 'GP12', 'GP13', 'GND', 'GP14', 'GP15'],
+      ['VBUS', 'VSYS', 'GND', '3V3_EN', '3V3', 'ADC_VREF', 'GP28', 'AGND', 'GP27', 'GP26', 'RUN', 'GP22', 'GND', 'GP21', 'GP20', 'GP19', 'GP18', 'GND', 'GP17', 'GP16'],
+      17.78, 21.6, 51.6),
+  },
+  {
+    type: 'dht22', name: '온습도 센서', category: '입력', prefix: 'U', defaultValue: 'DHT22',
+    desc: '온도와 습도를 재는 센서입니다. DATA와 VCC 사이에 10kΩ 풀업 저항을 달아 주세요. 3번 핀(NC)은 연결하지 않아요. DHT11도 핀이 같아요.',
+    pinHelp: 'VCC(1), DATA(2), NC(3, 연결 안 함), GND(4)',
+    footprint: { name: 'DHT22_4pin', pads: inline(['VCC', 'DATA', 'NC', 'GND'], 2.54, 1.7, 1.0), silk: rect(0, 0, 15.5, 7.9), w: 16.1, h: 8.5 },
+  },
+  {
+    type: 'oled_i2c', name: 'OLED 화면 연결 (I2C)', category: '연결', prefix: 'J', defaultValue: '0.96" SSD1306',
+    desc: '0.96인치 OLED 화면 모듈을 꽂는 4핀 소켓입니다. 모듈마다 GND와 VCC 순서가 바뀐 것이 있으니 모듈 뒷면 글씨를 꼭 확인하세요.',
+    pinHelp: 'GND, VCC(3.3~5V), SCL(클럭), SDA(데이터) — 이 순서',
+    footprint: namedHeader(['GND', 'VCC', 'SCL', 'SDA'], 'OLED_I2C_1x4'),
+  },
+  {
+    type: 'hcsr04', name: '초음파 거리 센서 연결', category: '연결', prefix: 'J', defaultValue: 'HC-SR04',
+    desc: 'HC-SR04 초음파 센서를 꽂는 4핀 소켓입니다. 5V로 동작하고, 3.3V 보드(ESP32·피코)에는 ECHO를 저항 분배로 낮춰서 연결해요.',
+    pinHelp: 'VCC(5V), TRIG(보내기), ECHO(받기), GND',
+    footprint: namedHeader(['VCC', 'TRIG', 'ECHO', 'GND'], 'HC-SR04_1x4'),
+  },
+  {
+    type: 'servo', name: '서보 모터 연결', category: '연결', prefix: 'J', defaultValue: 'SG90',
+    desc: '서보 모터 커넥터(3핀)를 꽂는 자리입니다. 갈색=GND, 빨강=VCC(5V), 주황=SIG(신호)예요. 서보가 여러 개면 전원을 넉넉히 주세요.',
+    pinHelp: 'GND(갈색), VCC(빨강, 5V), SIG(주황, PWM 신호)',
+    footprint: namedHeader(['GND', 'VCC', 'SIG'], 'Servo_1x3'),
+  },
+  {
+    type: 'usb_power', name: 'USB-C 전원 모듈 연결', category: '전원', prefix: 'J', defaultValue: 'USB-C 5V',
+    desc: 'USB-C 전원 보드(브레이크아웃)의 + / - 핀을 연결하는 자리입니다. 휴대폰 충전기로 5V를 쓸 수 있어요.',
+    pinHelp: 'VBUS = 5V(+), GND = -',
+    footprint: namedHeader(['VBUS', 'GND'], 'USB_C_Power_1x2'),
+  },
+  {
+    type: 'terminal3', name: '나사 단자 3핀', category: '연결', prefix: 'J', defaultValue: '3P 5.08mm',
+    desc: '전선을 나사로 고정하는 3핀 단자입니다. 모터, 릴레이 출력, 센서 선을 연결할 때 써요.',
+    pinHelp: '1, 2, 3',
+    footprint: { name: 'TerminalBlock_1x3_P5.08', pads: inline(['1', '2', '3'], 5.08, 2.4, 1.3), silk: rect(0, 0, 15.3, 7.6), w: 15.9, h: 8.2 },
   },
 ];
 

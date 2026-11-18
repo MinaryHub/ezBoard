@@ -21,7 +21,7 @@ npm run dev     # http://localhost:5173
    - **보드 마무리**(주문 탭): GND 구리 채우기(양면, 다른 넷과 0.5mm, 열 차단 다리)와 M3 고정 나사 구멍 4개(`ezboard-NPTH.drl`). 배선이 막히면 보드를 100mm까지 조금씩 키워 다시 시도합니다.
 
 ## 구조
-- `src/lib/library.ts` 부품 라이브러리·풋프린트 (스루홀 위주)
+- `src/lib/library.ts` 부품 라이브러리·풋프린트 (스루홀 위주, 약 40종: 기본 부품, 트랜지스터·MOSFET, 레귤레이터, 555·LM358·74HC595·ULN2003·L293D, 아두이노 나노·ESP32 DevKit·라즈베리 파이 피코, 센서·모듈 연결 소켓)
 - `src/lib/ai.ts` Claude/Gemini/OpenAI 연결, 시스템 프롬프트, 회로 JSON 파싱
 - `src/lib/geometry.ts` 자동 배치, 래츠네스트
 - `src/lib/router.ts` 자동 배선기
@@ -32,7 +32,7 @@ npm run dev     # http://localhost:5173
 - `src/lib/gerber.ts`, `font.ts` 거버/드릴/BOM 생성
 - `src/components/*` UI (채팅, PCB 캔버스, 오른쪽 패널, 설정)
 
-API 키는 브라우저 localStorage에만 저장되고 각 AI 회사 API로 직접 전송됩니다.
+API 키는 각 AI 회사 API로만 직접 전송됩니다. **데스크톱 앱**에서는 운영체제 보안 저장소(macOS 키체인, Windows DPAPI, Linux 키링)로 암호화해 `ai-keys.json`(앱 데이터 폴더)에 두고 localStorage에는 남기지 않습니다 (`electron/secure-keys.cjs`). 예전 버전이 localStorage에 남긴 키는 처음 실행할 때 옮겨집니다. 웹·안드로이드와 키링이 없는 Linux는 예전처럼 localStorage에 둡니다.
 
 데스크톱 앱에서는 API 키 대신 **로그인한 계정**으로도 연결할 수 있습니다 (⚙️ 설정 ▸ 각 AI ▸ "로그인한 계정"). 이 컴퓨터에 설치·로그인된 공식 CLI를 대신 실행합니다: Claude → Claude Code(`claude`), GPT → Codex CLI(`codex login`), Gemini → Gemini CLI(`gemini`). 빈 임시 폴더에서 도구 없이 실행되어 파일을 읽거나 고치지 않습니다 (`electron/cli-ai.cjs`).
 

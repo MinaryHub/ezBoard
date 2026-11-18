@@ -103,3 +103,91 @@ test('auto-fix: unknown part types and broken JSON become problems', () => {
   assert.equal(broken.circuit, undefined);
   assert.equal(broken.problems.length, 1);
 });
+
+// ── 부품 라이브러리 ──
+import { LIBRARY_LIST } from '../src/lib/library';
+import { symbolFor } from '../src/lib/symbols';
+
+test('library: every part has a schematic symbol pin for each footprint pin', () => {
+  for (const d of LIBRARY_LIST) {
+    const fp = new Set(d.footprint.pads.map((p) => p.pin));
+    const sym = new Set(symbolFor(d.type).pins.map((p) => p.name));
+    assert.deepEqual([...fp].filter((p) => !sym.has(p)), [], `${d.type}: footprint pins missing from symbol`);
+    assert.deepEqual([...sym].filter((p) => !fp.has(p)), [], `${d.type}: symbol pins not on footprint`);
+  }
+});
+
+test('library: pads do not overlap and sit inside the courtyard', () => {
+  for (const d of LIBRARY_LIST) {
+    const pads = d.footprint.pads;
+    for (let i = 0; i < pads.length; i++) {
+      const a = pads[i];
+      assert.ok(Math.abs(a.x) + a.w / 2 <= d.footprint.w / 2 + 0.01 && Math.abs(a.y) + a.h / 2 <= d.footprint.h / 2 + 0.01, `${d.type} pad ${a.num} outside courtyard`);
+      for (let j = i + 1; j < pads.length; j++) {
+        const b = pads[j];
+        const gapX = Math.abs(a.x - b.x) - (a.w + b.w) / 2, gapY = Math.abs(a.y - b.y) - (a.h + b.h) / 2;
+        assert.ok(Math.max(gapX, gapY) >= 0.3, `${d.type} pads ${a.num}/${b.num} too close`);
+      }
+    }
+    assert.deepEqual(pads.map((p) => p.num), pads.map((_, i) => i + 1), `${d.type} pad numbers`);
+  }
+});
+
+const NEW_PART_CIRCUITS: [string, AiCircuit][] = [
+  ['ESP32 weather station', {
+    parts: [
+      { ref: 'J1', type: 'usb_power' }, { ref: 'A1', type: 'esp32_devkit' }, { ref: 'U1', type: 'dht22' }, { ref: 'R1', type: 'resistor', value: '10kΩ' },
+      { ref: 'J2', type: 'oled_i2c' }, { ref: 'LED1', type: 'rgb_led' }, { ref: 'R2', type: 'resistor' }, { ref: 'R3', type: 'resistor' }, { ref: 'R4', type: 'resistor' },
+      { ref: 'C1', type: 'capacitor_pol' },
+    ],
+    nets: [
+      { name: '5V', pins: ['J1.VBUS', 'A1.VIN', 'C1.+'] },
+      { name: '3V3', pins: ['A1.3V3', 'U1.VCC', 'R1.1', 'J2.VCC'] },
+      { name: 'GND', pins: ['J1.GND', 'A1.GND', 'U1.GND', 'J2.GND', 'LED1.K', 'C1.-'] },
+      { name: 'DHT', pins: ['A1.D4', 'U1.DATA', 'R1.2'] },
+      { name: 'SDA', pins: ['A1.D21', 'J2.SDA'] }, { name: 'SCL', pins: ['A1.D22', 'J2.SCL'] },
+      { name: 'R_DRV', pins: ['A1.D25', 'R2.1'] }, { name: 'R_LED', pins: ['R2.2', 'LED1.R'] },
+      { name: 'G_DRV', pins: ['A1.D26', 'R3.1'] }, { name: 'G_LED', pins: ['R3.2', 'LED1.G'] },
+      { name: 'B_DRV', pins: ['A1.D27', 'R4.1'] }, { name: 'B_LED', pins: ['R4.2', 'LED1.B'] },
+    ],
+  }],
+  ['Pico + 74HC595 LED bar', {
+    parts: [
+      { ref: 'A1', type: 'pico' }, { ref: 'U1', type: 'hc595' }, { ref: 'C1', type: 'capacitor' },
+      ...Array.from({ length: 8 }, (_, i) => [{ ref: `R${i + 1}`, type: 'resistor' }, { ref: `LED${i + 1}`, type: 'led' }]).flat(),
+    ],
+    nets: [
+      { name: '3V3', pins: ['A1.3V3', 'U1.VCC', 'U1.SRCLR', 'C1.1'] },
+      { name: 'GND', pins: ['A1.GND', 'U1.GND', 'U1.OE', 'C1.2', ...Array.from({ length: 8 }, (_, i) => `LED${i + 1}.K`)] },
+      { name: 'SER', pins: ['A1.GP2', 'U1.SER'] }, { name: 'SRCLK', pins: ['A1.GP3', 'U1.SRCLK'] }, { name: 'RCLK', pins: ['A1.GP4', 'U1.RCLK'] },
+      ...['QA', 'QB', 'QC', 'QD', 'QE', 'QF', 'QG', 'QH'].flatMap((q, i) => [
+        { name: q, pins: [`U1.${q}`, `R${i + 1}.1`] },
+        { name: `L${i + 1}`, pins: [`R${i + 1}.2`, `LED${i + 1}.A`] },
+      ]),
+    ],
+  }],
+  ['L293D two motors', {
+    parts: [
+      { ref: 'A1', type: 'arduino_nano' }, { ref: 'U1', type: 'l293d' }, { ref: 'J1', type: 'power_in', value: '9V' },
+      { ref: 'J2', type: 'terminal3' }, { ref: 'J3', type: 'terminal3' }, { ref: 'C1', type: 'capacitor' }, { ref: 'C2', type: 'capacitor_pol' },
+    ],
+    nets: [
+      { name: 'VM', pins: ['J1.+', 'U1.VCC2', 'A1.VIN', 'C2.+'] },
+      { name: '5V', pins: ['A1.5V', 'U1.VCC1', 'U1.EN1', 'U1.EN2', 'C1.1'] },
+      { name: 'GND', pins: ['J1.-', 'A1.GND', 'U1.GND', 'C1.2', 'C2.-', 'J2.3', 'J3.3'] },
+      { name: 'IN1', pins: ['A1.D5', 'U1.IN1'] }, { name: 'IN2', pins: ['A1.D6', 'U1.IN2'] },
+      { name: 'IN3', pins: ['A1.D9', 'U1.IN3'] }, { name: 'IN4', pins: ['A1.D10', 'U1.IN4'] },
+      { name: 'M1A', pins: ['U1.OUT1', 'J2.1'] }, { name: 'M1B', pins: ['U1.OUT2', 'J2.2'] },
+      { name: 'M2A', pins: ['U1.OUT3', 'J3.1'] }, { name: 'M2B', pins: ['U1.OUT4', 'J3.2'] },
+    ],
+  }],
+];
+
+for (const [name, circuit] of NEW_PART_CIRCUITS) {
+  test(`new parts — ${name}: no circuit problems, routes fully with GND fill`, () => {
+    const { project, route } = buildFromCircuit(blank({ pour: true }), circuit);
+    assert.deepEqual(circuitIssues(project, []), []);
+    assert.equal(route.failed.length, 0, `failed: ${JSON.stringify(route.failed)}`);
+    assert.deepEqual(errors(project).map((e) => e.message), []);
+  });
+}

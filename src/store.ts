@@ -7,6 +7,7 @@ import { autoPlace } from './lib/geometry';
 import { autoRoute, type RouteResult } from './lib/router';
 import { PROVIDERS, type AiCircuit } from './lib/ai';
 import { buildFromCircuit } from './lib/build';
+import { forLocalStorage, loadKeys, saveKeys } from './lib/secureKeys';
 import { connectPins, disconnectPin, type PinId } from './lib/connect';
 import { hitsHole, mountingHoles } from './lib/features';
 import { partBox } from './lib/library';
@@ -200,7 +201,7 @@ export const useStore = create<State>((set, get) => ({
   loadProject: (p) => { get().commit({ ...emptyProject(), ...p }); set({ selected: null }); },
   pushMessage: (m) => set((s) => ({ messages: [...s.messages, m] })),
   clearChat: () => set({ messages: [] }),
-  setSettings: (settings) => { save('ezboard.settings', settings); set({ settings }); },
+  setSettings: (settings) => { save('ezboard.settings', forLocalStorage(settings)); void saveKeys(settings.keys); set({ settings }); },
   setView: (view) => set({ view }),
   setStage: (stage) => set({ stage }),
   setAppearance: (appearance) => { try { localStorage.setItem('ezboard.appearance', appearance); } catch { /* 무시 */ } set({ appearance }); },
@@ -252,6 +253,14 @@ export const useStore = create<State>((set, get) => ({
     toastTimer = setTimeout(() => set({ toast: null }), 3500);
   },
 }));
+
+// 데스크톱: AI 키는 운영체제 보안 저장소에서 읽고, localStorage에 남은 예전 평문 키는 옮긴 뒤 지운다
+void loadKeys(useStore.getState().settings.keys).then((r) => {
+  if (!r) return;
+  const settings = { ...useStore.getState().settings, keys: r.keys };
+  useStore.setState({ settings });
+  save('ezboard.settings', forLocalStorage(settings));
+}).catch(() => { /* 보안 저장소를 못 쓰면 예전처럼 */ });
 
 // 자동 저장
 useStore.subscribe((s, prev) => {
