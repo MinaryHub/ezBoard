@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 
 type VB = { x: number; y: number; w: number; h: number };
 
@@ -15,10 +15,25 @@ export function usePinchZoom(
     const [a, b] = [...pts.current.values()];
     return { d: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
   };
-  const end = (e: React.PointerEvent) => {
-    pts.current.delete(e.pointerId);
-    if (pts.current.size < 2) last.current = null;
+  const drop = (id: number) => {
+    if (!pts.current.delete(id)) return;
+    last.current = pts.current.size === 2 ? measure() : null;
   };
+  const end = (e: React.PointerEvent) => drop(e.pointerId);
+
+  // 손가락이 SVG 밖에서 떨어지거나 브라우저가 취소해도 잔류 포인터가 남지 않게 전역 정리
+  useEffect(() => {
+    const onEnd = (e: PointerEvent) => drop(e.pointerId);
+    const onBlur = () => { pts.current.clear(); last.current = null; };
+    window.addEventListener('pointerup', onEnd);
+    window.addEventListener('pointercancel', onEnd);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('pointerup', onEnd);
+      window.removeEventListener('pointercancel', onEnd);
+      window.removeEventListener('blur', onBlur);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return {
     onPointerDownCapture: (e: React.PointerEvent) => {
@@ -28,6 +43,8 @@ export function usePinchZoom(
         onStart();
         last.current = measure();
         e.stopPropagation();
+      } else if (pts.current.size > 2) {
+        last.current = null;
       }
     },
     onPointerMoveCapture: (e: React.PointerEvent) => {
@@ -43,9 +60,9 @@ export function usePinchZoom(
       setVb((v) => {
         const w = Math.min(600, Math.max(8, v.w * k));
         const f = w / v.w;
-        // 손가락 중심점은 같은 위치에 머물고, 중심 이동만큼 화면도 이동
-        const x = pPrev.x - (pPrev.x - v.x) * f - (pNow.x - pPrev.x);
-        const y = pPrev.y - (pPrev.y - v.y) * f - (pNow.y - pPrev.y);
+        // 이전 중심 세계 좌표 pPrev가 새 viewBox에서도 현재 손가락 중심 pNow 아래에 머물도록 계산
+        const x = pPrev.x - (pNow.x - v.x) * f;
+        const y = pPrev.y - (pNow.y - v.y) * f;
         return { x, y, w, h: v.h * f };
       });
       last.current = now;

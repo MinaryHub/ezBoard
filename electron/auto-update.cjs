@@ -51,6 +51,9 @@ function load() {
 function registerAutoUpdateHandlers() {
   ipcMain.handle('autoupdate:supported', () => supported());
   ipcMain.handle('autoupdate:state', () => state);
+  ipcMain.handle('autoupdate:set-enabled', (_e, enabled) => {
+    if (updater) updater.autoInstallOnAppQuit = !!enabled;
+  });
   // 확인하고, 새 버전이 있으면 바로 받는다
   ipcMain.handle('autoupdate:check', async () => {
     if (!supported()) return { status: 'idle' };
@@ -58,7 +61,7 @@ function registerAutoUpdateHandlers() {
     try {
       await load().checkForUpdates();
     } catch (e) {
-      setState({ status: 'error', message: String(e?.message ?? e).split('\n')[0] });
+      if (state.status !== 'error') setState({ status: 'error', version: state.version, message: String(e?.message ?? e).split('\n')[0] });
     }
     return state;
   });

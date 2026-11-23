@@ -191,3 +191,197 @@ for (const [name, circuit] of NEW_PART_CIRCUITS) {
     assert.deepEqual(errors(project).map((e) => e.message), []);
   });
 }
+
+// ── 회귀 테스트 (제조 정확성 · DRC · 배선 · 파싱 · 상태 검증) ──
+import { bomItems } from '../src/lib/gerber';
+import { isPowerNet } from '../src/lib/router';
+import { netKind, routeSchematic } from '../src/lib/schematic';
+import { connectPins, disconnectPin } from '../src/lib/connect';
+import { suggestBoardSize } from '../src/lib/geometry';
+import { renderMarkdown } from '../src/lib/markdown';
+import { sanitizeProject } from '../src/store';
+
+test('gerber: soldermask polarity is Negative, Korean board name falls back to EZBOARD, Excellon omits conflicting TZ', () => {
+  const { project } = buildFromCircuit(blank({ name: '아두이노 테스트' }), EXAMPLES[0].circuit);
+  const g = buildGerbers(project);
+  assert.match(g['ezboard-F_Mask.gts'], /%TF\.FilePolarity,Negative\*%/);
+  assert.match(g['ezboard-B_Mask.gbs'], /%TF\.FilePolarity,Negative\*%/);
+  assert.match(g['ezboard-PTH.drl'], /^METRIC$/m);
+  assert.doesNotMatch(g['ezboard-PTH.drl'], /^METRIC,TZ$/m);
+  // 한글 이름은 실크스크린 폰트에 글리프가 없으므로 EZBOARD로 대체되어 스트로크가 생성되어야 한다
+  assert.ok(g['ezboard-F_Silkscreen.gto'].includes('D01*'));
+  const bom = bomItems(project);
+  assert.ok(bom.length > 0 && bom.every((item) => item.qty > 0 && item.refs.split(' ').length === item.qty));
+});
+
+test('drc: unroutedCount respects layers and recognizes T-junctions', () => {
+  const base: Project = {
+    name: 'layer-test',
+    board: { width: 50, height: 40 },
+    parts: [
+      { ref: 'R1', type: 'resistor', value: '1k', x: 10, y: 20, rot: 0 },
+      { ref: 'R2', type: 'resistor', value: '1k', x: 35, y: 20, rot: 0 },
+    ],
+    nets: [{ name: 'N1', pins: ['R1.1', 'R2.1'] }],
+    // R1.1 = (4.92, 20), R2.1 = (29.92, 20) — 서로 다른 층에서 만나지만 비아 없음
+    tracks: [
+      { net: 'N1', layer: 'top', width: 0.4, points: [[4.92, 20], [18, 20]] },
+      { net: 'N1', layer: 'bottom', width: 0.4, points: [[18, 20], [29.92, 20]] },
+    ],
+    vias: [],
+  };
+  assert.equal(unroutedCount(base), 1, 'crossing top/bottom without via must be unrouted');
+  const withVia: Project = { ...base, vias: [{ net: 'N1', x: 18, y: 20, diameter: 0.8, drill: 0.4 }] };
+  assert.equal(unroutedCount(withVia), 0, 'adding a via connects top and bottom');
+
+  // T-분기도 같은 층이면 연결로 인식해야 한다
+  const tJunc: Project = {
+    ...base,
+    parts: [...base.parts, { ref: 'R3', type: 'resistor', value: '1k', x: 23.08, y: 30, rot: 0 }],
+    nets: [{ name: 'N1', pins: ['R1.1', 'R2.1', 'R3.1'] }],
+    tracks: [
+      { net: 'N1', layer: 'top', width: 0.4, points: [[4.92, 20], [29.92, 20]] },
+      { net: 'N1', layer: 'top', width: 0.4, points: [[18, 20], [18, 30]] },
+    ],
+    vias: [],
+  };
+  assert.equal(unroutedCount(tJunc), 0, 'T-junction on same layer is connected');
+});
+
+test('drc: detects pad-to-pad, via-to-via, and long-segment pad clearance violations', () => {
+  // 패드-패드 충돌 (서로 다른 넷의 두 저항 패드가 겹침)
+  const padClash: Project = blank({
+    parts: [
+      { ref: 'R1', type: 'resistor', value: '1k', x: 20, y: 20, rot: 0 },
+      { ref: 'R2', type: 'resistor', value: '1k', x: 20.5, y: 20, rot: 0 },
+    ],
+    nets: [
+      { name: 'A', pins: ['R1.1', 'R1.2'] },
+      { name: 'B', pins: ['R2.1', 'R2.2'] },
+    ],
+  });
+  assert.ok(clearanceViolations(padClash).length > 0, 'pad-to-pad clearance violation expected');
+
+  // 비아-비아 충돌
+  const viaClash: Project = blank({
+    vias: [
+      { net: 'A', x: 20, y: 20, diameter: 0.8, drill: 0.4 },
+      { net: 'B', x: 20.7, y: 20, diameter: 0.8, drill: 0.4 },
+    ],
+  });
+  assert.ok(clearanceViolations(viaClash).length > 0, 'via-to-via clearance violation expected');
+
+  // 70mm 장거리 세그먼트 중간이 다른 넷 패드를 스침
+  const longSegClash: Project = blank({
+    board: { width: 90, height: 40 },
+    parts: [{ ref: 'R1', type: 'resistor', value: '1k', x: 45, y: 20, rot: 0 }],
+    nets: [{ name: 'B', pins: ['R1.1', 'R1.2'] }],
+    tracks: [{ net: 'A', layer: 'top', width: 0.4, points: [[5, 20], [85, 20]] }],
+  });
+  assert.ok(clearanceViolations(longSegClash).length > 0, 'long segment crossing foreign pad expected');
+});
+
+test('drc: ledNoR catches unprotected LED even with unrelated GND resistor, and catches rgb_led', () => {
+  const ledProj: Project = blank({
+    parts: [
+      { ref: 'J1', type: 'power_in', value: '5V', x: 10, y: 20, rot: 0 },
+      { ref: 'LED1', type: 'led', value: 'Red', x: 25, y: 20, rot: 0 },
+      { ref: 'R1', type: 'resistor', value: '10k', x: 40, y: 20, rot: 0 },
+      { ref: 'SW1', type: 'button', value: 'SW', x: 40, y: 10, rot: 0 },
+    ],
+    nets: [
+      { name: '5V', pins: ['J1.+', 'LED1.A', 'SW1.1'] },
+      { name: 'BTN', pins: ['SW1.2', 'R1.1'] },
+      { name: 'GND', pins: ['J1.-', 'LED1.K', 'R1.2'] },
+    ],
+  });
+  assert.ok(runDrc(ledProj).some((i) => i.code === 'ledNoR' && i.refs?.includes('LED1')));
+
+  const rgbProj: Project = blank({
+    parts: [
+      { ref: 'J1', type: 'power_in', value: '5V', x: 10, y: 20, rot: 0 },
+      { ref: 'LED1', type: 'rgb_led', value: 'RGB', x: 25, y: 20, rot: 0 },
+    ],
+    nets: [
+      { name: '5V', pins: ['J1.+', 'LED1.R'] },
+      { name: 'GND', pins: ['J1.-', 'LED1.K'] },
+    ],
+  });
+  assert.ok(runDrc(rgbProj).some((i) => i.code === 'ledNoR' && i.refs?.includes('LED1')));
+});
+
+test('power net classification, short protection, and disconnectPin isolation', () => {
+  assert.equal(isPowerNet('3V3_EN'), false);
+  assert.equal(isPowerNet('POWER_LED'), false);
+  assert.equal(netKind('3V3_EN'), 'signal');
+  assert.equal(netKind('POWER_LED'), 'signal');
+  assert.equal(isPowerNet('VBUS'), true);
+  assert.equal(isPowerNet('VSYS'), true);
+  assert.equal(isPowerNet('VM'), true);
+  assert.equal(netKind('VBUS'), 'power');
+  assert.equal(netKind('AGND'), 'gnd');
+
+  const p = blank({
+    parts: [
+      { ref: 'J1', type: 'usb_power', value: '5V', x: 10, y: 10, rot: 0 },
+      { ref: 'R1', type: 'resistor', value: '1k', x: 25, y: 10, rot: 0 },
+      { ref: 'R2', type: 'resistor', value: '1k', x: 40, y: 10, rot: 0 },
+    ],
+    nets: [
+      { name: 'VBUS', pins: ['J1.VBUS', 'R1.1'] },
+      { name: 'GND', pins: ['J1.GND', 'R1.2'] },
+      { name: 'ORPHAN', pins: ['R2.1'] },
+    ],
+  });
+  const shortRes = connectPins(p, { ref: 'J1', name: 'VBUS' }, { ref: 'J1', name: 'GND' });
+  assert.equal(shortRes.ok, false);
+  if (!shortRes.ok) assert.equal(shortRes.reason, 'short');
+
+  // disconnectPin은 변경한 넷만 2핀 미만일 때 제거하고 무관한 1핀 넷(ORPHAN)은 유지한다
+  const disc = disconnectPin(p, { ref: 'R1', name: '1' });
+  assert.ok(disc);
+  assert.equal(disc.project.nets.some((n) => n.name === 'VBUS'), false);
+  assert.equal(disc.project.nets.some((n) => n.name === 'ORPHAN'), true);
+});
+
+test('board sizing: preserves large board (>100mm) and handles tall parts', () => {
+  const { project } = buildFromCircuit(blank(), { ...EXAMPLES[0].circuit, board: { width: 120, height: 80 } });
+  assert.ok(project.board.width >= 120 && project.board.height >= 80, `board shrank to ${project.board.width}x${project.board.height}`);
+
+  const tall = suggestBoardSize([{ ref: 'A1', type: 'esp32_devkit', value: 'ESP32', x: 0, y: 0, rot: 0 }]);
+  assert.ok(tall.height >= 60, `tall part height underestimated: ${tall.height}`);
+});
+
+test('schematic router: extreme coordinates fall back to labels without hanging or OOM', () => {
+  const parts: Project['parts'] = [
+    { ref: 'R1', type: 'resistor', value: '1k', x: 0, y: 0, rot: 0 },
+    { ref: 'R2', type: 'resistor', value: '1k', x: 0, y: 0, rot: 0 },
+  ];
+  const nets = [{ name: 'N1', pins: ['R1.1', 'R2.1'] }];
+  const route = routeSchematic(parts, nets, { R1: { x: 0, y: 0, rot: 0 }, R2: { x: 10000, y: 10000, rot: 0 } });
+  assert.equal(route.labels.length, 2, 'signal pins should fall back to net labels');
+});
+
+test('extractCircuit, renderMarkdown, and sanitizeProject handle edge cases safely', () => {
+  const extracted = extractCircuit(
+    '```JSON\n{"board":{"width":"bad","height":50},"parts":[{"ref":"R1","type":"resistor"},{"ref":"R1","type":"resistor"}],"nets":[{"name":"N1","pins":["R1.1"]}]}\n```',
+  );
+  assert.ok(extracted.circuit);
+  assert.equal(extracted.circuit.parts.length, 1, 'duplicate ref should be deduplicated');
+  assert.equal(extracted.circuit.board, undefined, 'non-numeric board should be dropped');
+
+  const md = renderMarkdown('#### Heading\nUse `a **b** c` and **bold**\n```JSON\n{"x":1}\n```');
+  assert.match(md, /<h4>Heading<\/h4>/);
+  assert.match(md, /<code>a \*\*b\*\* c<\/code>/);
+  assert.match(md, /<b>bold<\/b>/);
+  assert.match(md, /<pre>\{/);
+
+  assert.equal(sanitizeProject(null), null);
+  assert.equal(sanitizeProject({ parts: 'nope' }), null);
+  const san = sanitizeProject({ name: 'ok', board: { width: 999, height: -5 }, parts: [{ ref: 'R1', type: 'resistor', x: 'NaN', y: 10, rot: 450 }] });
+  assert.ok(san);
+  assert.deepEqual(san.board, { width: 200, height: 10 });
+  assert.equal(san.parts[0].x, 0);
+  assert.equal(san.parts[0].rot, 90);
+});
+

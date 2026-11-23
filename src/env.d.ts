@@ -2,10 +2,6 @@
 
 declare const __APP_VERSION__: string;
 
-interface ImportMetaEnv {
-  /** 문의하기 전송 서버 주소 (기본: https://ezboard-contact.vercel.app/api/contact) */
-  readonly VITE_CONTACT_URL?: string;
-}
 
 /** 데스크톱(Electron) 앱에서만 있는 다리 (electron/preload.cjs) */
 interface EzboardBridge {
@@ -19,6 +15,8 @@ interface EzboardBridge {
   cliStatus(provider: string): Promise<{ installed: boolean; loggedIn: boolean; detail?: string }>;
   /** 로그인한 계정(공식 CLI)으로 질문 */
   cliAsk(provider: string, req: { model?: string; system: string; prompt: string }): Promise<string>;
+  /** 실행 중인 CLI 질문 중단 */
+  cliCancel?(): Promise<void>;
   /** AI 키를 운영체제 보안 저장소에 보관 (1.3.1부터) */
   keys?: {
     supported(): Promise<boolean>;
@@ -31,6 +29,7 @@ interface EzboardBridge {
     state(): Promise<AutoUpdateState>;
     check(): Promise<AutoUpdateState>;
     install(): Promise<boolean>;
+    setEnabled?(on: boolean): Promise<void>;
     onState(cb: (s: AutoUpdateState) => void): () => void;
   };
 }

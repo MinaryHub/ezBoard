@@ -23,6 +23,4 @@ jobs:
       - run: npm run build
       - run: npm run lint
       - run: npm test
-      - name: Contact relay tests
-        working-directory: services/contact
-        run: npm test
+

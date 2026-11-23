@@ -39,56 +39,68 @@ export function autoPlace(project: Project, keep: Set<string>): Project {
   const { board } = project;
   const margin = 3;
   const placed: Part[] = project.parts.filter((p) => keep.has(p.ref));
+  const placedBoxes = placed.map(partBox);
   const toPlace = project.parts.filter((p) => !keep.has(p.ref));
 
-  // 연결이 많은 부품부터 배치
-  const degree = (ref: string) => project.nets.filter((n) => n.pins.some((p) => p.startsWith(ref + '.'))).length;
-  toPlace.sort((a, b) => {
-    const ba = partBox(a), bb = partBox(b);
-    return (bb.x2 - bb.x1) * (bb.y2 - bb.y1) - (ba.x2 - ba.x1) * (ba.y2 - ba.y1) || degree(b.ref) - degree(a.ref);
-  });
+  // 대소문자 구분 없이 부품 간 연결 인접 목록 사전 계산
+  const adj = new Map<string, Set<string>>();
+  for (const p of project.parts) adj.set(p.ref.toLowerCase(), new Set());
+  for (const net of project.nets) {
+    const refs = [...new Set(net.pins.map((x) => x.slice(0, x.lastIndexOf('.')).trim().toLowerCase()).filter((r) => adj.has(r)))];
+    for (const r of refs) for (const q of refs) if (r !== q) adj.get(r)!.add(q);
+  }
+  const areaOf = new Map(toPlace.map((p) => { const b = partBox(p); return [p.ref, (b.x2 - b.x1) * (b.y2 - b.y1)]; }));
+  toPlace.sort((a, b) => (areaOf.get(b.ref)! - areaOf.get(a.ref)!) || ((adj.get(b.ref.toLowerCase())?.size ?? 0) - (adj.get(a.ref.toLowerCase())?.size ?? 0)));
 
   const holes = mountingHoles(project);
-  const overlaps = (p: Part) => {
-    const b = partBox(p);
+  const overlaps = (b: { x1: number; y1: number; x2: number; y2: number }) => {
     if (b.x1 < margin || b.y1 < margin || b.x2 > board.width - margin || b.y2 > board.height - margin) return true;
     if (hitsHole(holes, b, 0.5)) return true;
-    return placed.some((q) => {
-      const c = partBox(q);
-      return b.x1 < c.x2 + 1.5 && b.x2 > c.x1 - 1.5 && b.y1 < c.y2 + 1.5 && b.y2 > c.y1 - 1.5;
-    });
-  };
-
-  // 이미 배치된 연결 상대와의 거리 합 (가까울수록 좋음)
-  const cost = (p: Part) => {
-    let c = 0;
-    for (const net of project.nets) {
-      if (!net.pins.some((x) => x.startsWith(p.ref + '.'))) continue;
-      for (const pin of net.pins) {
-        const ref = pin.split('.')[0];
-        const q = placed.find((x) => x.ref === ref);
-        if (q && q.ref !== p.ref) c += Math.hypot(q.x - p.x, q.y - p.y);
-      }
+    for (let i = 0; i < placedBoxes.length; i++) {
+      const c = placedBoxes[i];
+      if (b.x1 < c.x2 + 1.5 && b.x2 > c.x1 - 1.5 && b.y1 < c.y2 + 1.5 && b.y2 > c.y1 - 1.5) return true;
     }
-    // 연결이 없으면 중앙 근처 선호
-    return c || Math.hypot(p.x - board.width / 2, p.y - board.height / 2) * 0.1;
+    return false;
   };
 
+  let overflowY = margin;
   for (const part of toPlace) {
+    const neighRefs = adj.get(part.ref.toLowerCase());
+    const neighbors = neighRefs ? placed.filter((q) => neighRefs.has(q.ref.toLowerCase())) : [];
+    const baseBox = partBox({ ...part, x: 0, y: 0, rot: 0 });
+    const hw0 = (baseBox.x2 - baseBox.x1) / 2, hh0 = (baseBox.y2 - baseBox.y1) / 2;
+
     let best: Part | null = null;
     let bestCost = Infinity;
     for (const rot of [0, 90]) {
-      for (let y = margin; y <= board.height - margin; y += GRID * 2) {
-        for (let x = margin; x <= board.width - margin; x += GRID * 2) {
-          const cand = { ...part, x: snap(x), y: snap(y), rot };
-          if (overlaps(cand)) continue;
-          const c = cost(cand) + (rot ? 0.5 : 0);
-          if (c < bestCost) { bestCost = c; best = cand; }
+      const hw = rot === 90 ? hh0 : hw0;
+      const hh = rot === 90 ? hw0 : hh0;
+      const yMin = Math.max(margin, Math.ceil((margin + hh) / GRID) * GRID);
+      const yMax = board.height - margin - hh;
+      const xMin = Math.max(margin, Math.ceil((margin + hw) / GRID) * GRID);
+      const xMax = board.width - margin - hw;
+      for (let y = yMin; y <= yMax; y += GRID * 2) {
+        const sy = snap(y);
+        for (let x = xMin; x <= xMax; x += GRID * 2) {
+          const sx = snap(x);
+          const b = { x1: sx - hw, y1: sy - hh, x2: sx + hw, y2: sy + hh };
+          if (overlaps(b)) continue;
+          let c = 0;
+          if (neighbors.length) {
+            for (let k = 0; k < neighbors.length; k++) c += Math.hypot(neighbors[k].x - sx, neighbors[k].y - sy);
+          } else {
+            c = Math.hypot(sx - board.width / 2, sy - board.height / 2) * 0.1;
+          }
+          c += rot ? 0.5 : 0;
+          if (c < bestCost) { bestCost = c; best = { ...part, x: sx, y: sy, rot }; }
         }
       }
     }
-    // 자리가 없으면 보드 밖 오른쪽에 둔다 (사용자가 보드를 키우도록 DRC가 알려줌)
-    placed.push(best ?? { ...part, x: snap(board.width + 10), y: snap(margin + placed.length * 6) });
+    // 자리가 없으면 보드 밖 오른쪽에 겹치지 않게 둔다 (사용자가 보드를 키우도록 DRC가 알려줌)
+    const chosen = best ?? { ...part, x: snap(board.width + 10 + hw0), y: snap(overflowY + hh0), rot: 0 };
+    if (!best) overflowY += hh0 * 2 + 3;
+    placed.push(chosen);
+    placedBoxes.push(partBox(chosen));
   }
   const order = new Map(project.parts.map((p, i) => [p.ref, i]));
   placed.sort((a, b) => order.get(a.ref)! - order.get(b.ref)!);
@@ -108,5 +120,8 @@ export function suggestBoardSize(parts: Part[]): { width: number; height: number
     maxW = Math.max(maxW, b.x2 - b.x1);
     maxH = Math.max(maxH, b.y2 - b.y1);
   }
-  return { width: Math.max(side, Math.ceil((maxW + 10) / 5) * 5), height: Math.max(side, Math.ceil((Math.min(maxW, maxH) + 10) / 5) * 5) };
+  return {
+    width: Math.max(side, Math.ceil((maxW + 10) / 5) * 5),
+    height: Math.max(side, Math.ceil((maxH + 10) / 5) * 5),
+  };
 }

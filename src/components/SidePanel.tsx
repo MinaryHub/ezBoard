@@ -2,8 +2,8 @@ import { useMemo, useState } from 'react';
 import { useStore } from '../store';
 import { getDef, LIBRARY_LIST, nextRef, placedPads } from '../lib/library';
 import { catName, partDefaultValue, partDesc, partName, partPinHelp } from '../lib/library.i18n';
-import { runDrc } from '../lib/drc';
-import { buildBom, buildGerberOnlyZip, buildZip } from '../lib/gerber';
+import type { DrcIssue } from '../lib/drc';
+import { bomItems, buildBom, buildGerberOnlyZip, buildZip } from '../lib/gerber';
 import { saveFile } from '../lib/platform';
 import { t as tt, useLang, useT, type TKey } from '../i18n';
 import Icon, { type IconName } from './Icon';
@@ -20,30 +20,36 @@ const Html = ({ html, className }: { html: string; className?: string }) => <div
 
 const TAB_ICON: Record<Tab, IconName> = { part: 'part', add: 'add', nets: 'nets', check: 'shield', order: 'order' };
 
-export default function SidePanel({ tab, setTab, errorCount = 0 }: { tab: Tab; setTab: (t: Tab) => void; errorCount?: number }) {
+export default function SidePanel({ tab, setTab, issues, errorCount = 0 }: { tab: Tab; setTab: (t: Tab) => void; issues: DrcIssue[]; errorCount?: number }) {
   const board = useStore((s) => s.project.board);
-  const lang = useLang((s) => s.lang);
   const t = useT();
   return (
     <aside className="side">
       {/* 세로 아이콘 탭 (Kreate 속성 패널처럼) */}
       <nav className="vtabs">
         {TABS.map((id) => (
-          <button key={id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)} data-tip={`${t(`tab.${id}` as TKey)} — ${t(`tip.tab.${id}` as TKey)}`} aria-label={t(`tab.${id}` as TKey)}>
+          <button
+            key={id}
+            className={tab === id ? 'active' : ''}
+            onClick={() => setTab(id)}
+            data-tip={`${t(`tab.${id}` as TKey)} — ${t(`tip.tab.${id}` as TKey)}`}
+            aria-label={t(`tab.${id}` as TKey)}
+            aria-pressed={tab === id}
+          >
             <Icon name={TAB_ICON[id]} />
             {id === 'check' && errorCount > 0 && <span className="badge" />}
           </button>
         ))}
       </nav>
       <div className="side-main">
-      <div className="area-head"><div className="area-title"><Icon name={TAB_ICON[tab]} size={14} />{t(`tab.${tab}` as TKey)}</div></div>
-      <div className="side-body" key={lang}>
-        {tab === 'part' && <PartTab />}
-        {tab === 'add' && <AddTab onAdded={() => setTab('part')} />}
-        {tab === 'nets' && <NetsTab />}
-        {tab === 'check' && <CheckTab />}
-        {tab === 'order' && <OrderTab key={`${board.width}x${board.height}`} />}
-      </div>
+        <div className="area-head"><div className="area-title"><Icon name={TAB_ICON[tab]} size={14} />{t(`tab.${tab}` as TKey)}</div></div>
+        <div className="side-body">
+          {tab === 'part' && <PartTab />}
+          {tab === 'add' && <AddTab onAdded={() => setTab('part')} />}
+          {tab === 'nets' && <NetsTab />}
+          {tab === 'check' && <CheckTab issues={issues} />}
+          {tab === 'order' && <OrderTab key={`${board.width}x${board.height}`} issues={issues} />}
+        </div>
       </div>
     </aside>
   );
@@ -52,9 +58,12 @@ export default function SidePanel({ tab, setTab, errorCount = 0 }: { tab: Tab; s
 function PartTab() {
   const project = useStore((s) => s.project);
   const selected = useStore((s) => s.selected);
-  const { select, updatePart, rotatePart, deletePart } = useStore.getState();
+  const stage = useStore((s) => s.stage);
+  const { select, updatePart, rotatePart, rotateSchPart, deletePart } = useStore.getState();
   const t = useT();
   const part = project.parts.find((p) => p.ref === selected);
+  const [valEdit, setValEdit] = useState<{ ref: string; orig: string; draft: string } | null>(null);
+  const valDraft = part && valEdit && valEdit.ref === part.ref && valEdit.orig === part.value ? valEdit.draft : (part?.value ?? '');
 
   if (!part) {
     if (!project.parts.length) return <Html className="empty" html={t('part.empty')} />;
@@ -79,6 +88,11 @@ function PartTab() {
   const pins = placedPads(part);
   const pinNames = [...new Set(pins.map((p) => p.pin))];
   const pinHelp = def ? partPinHelp(def) : undefined;
+  const rotDeg = stage === 'sch' ? (project.sch?.[part.ref]?.rot ?? 0) : part.rot;
+  const commitValue = () => {
+    if (valDraft !== part.value) updatePart(part.ref, { value: valDraft }, true);
+    setValEdit(null);
+  };
   return (
     <div className="inspector">
       <div className="insp-head">
@@ -86,15 +100,25 @@ function PartTab() {
           <div className="ref">{part.ref}</div>
           <div className="muted">{def ? partName(def) : part.type} · {def?.footprint.name}</div>
         </div>
-        <button className="ghost small" onClick={() => select(null)}>✕</button>
+        <button className="ghost small" onClick={() => select(null)} aria-label={t('common.close')}><Icon name="close" size={14} /></button>
       </div>
       <p className="desc">{def ? partDesc(def) : ''}</p>
       {part.note && <p className="note">📝 {part.note}</p>}
       <label className="field">{t('part.value')}
-        <input value={part.value} onChange={(e) => updatePart(part.ref, { value: e.target.value })} />
+        <input
+          value={valDraft}
+          onChange={(e) => setValEdit({ ref: part.ref, orig: part.value, draft: e.target.value })}
+          onBlur={commitValue}
+          onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) (e.target as HTMLInputElement).blur(); }}
+        />
       </label>
       <div className="row">
-        <button onClick={() => rotatePart(part.ref)} data-tip={t('tip.rotate')}><Icon name="rotate" size={14} />{t('part.rotate', { deg: part.rot })}</button>
+        <button
+          onClick={() => (stage === 'sch' ? rotateSchPart(part.ref) : rotatePart(part.ref))}
+          data-tip={t('tip.rotate')}
+        >
+          <Icon name="rotate" size={14} />{t('part.rotate', { deg: rotDeg })}
+        </button>
         <button className="danger" onClick={() => deletePart(part.ref)} data-tip={t('tip.delete')}>{t('part.delete')}</button>
       </div>
       {pinHelp && <div className="tip">{t('part.pins', { help: pinHelp })}</div>}
@@ -102,12 +126,23 @@ function PartTab() {
       <table className="pins">
         <tbody>
           {pinNames.map((pin) => {
-            const net = project.nets.find((n) => n.pins.some((x) => {
-              const [r, pn] = [x.slice(0, x.lastIndexOf('.')), x.slice(x.lastIndexOf('.') + 1)];
+            const matchedNets = project.nets.filter((n) => n.pins.some((x) => {
+              const dot = x.lastIndexOf('.');
+              if (dot < 0) return false;
+              const r = x.slice(0, dot).trim(), pn = x.slice(dot + 1).trim();
               if (r.toLowerCase() !== part.ref.toLowerCase()) return false;
               return pn.toLowerCase() === pin.toLowerCase() || pins.find((p) => p.num === Number(pn))?.pin === pin;
             }));
-            return <tr key={pin}><td>{pin}</td><td>{net ? <span className="net-tag">{net.name}</span> : <span className="muted">{t('part.notConnected')}</span>}</td></tr>;
+            return (
+              <tr key={pin}>
+                <td>{pin}</td>
+                <td>
+                  {matchedNets.length
+                    ? matchedNets.map((n) => <span key={n.name} className="net-tag">{n.name} </span>)
+                    : <span className="muted">{t('part.notConnected')}</span>}
+                </td>
+              </tr>
+            );
           })}
         </tbody>
       </table>
@@ -116,8 +151,8 @@ function PartTab() {
 }
 
 function AddTab({ onAdded }: { onAdded: () => void }) {
-  const project = useStore((s) => s.project);
   const addPart = useStore((s) => s.addPart);
+  const lang = useLang((s) => s.lang);
   const t = useT();
   const [q, setQ] = useState('');
   const cats = useMemo(() => {
@@ -129,10 +164,10 @@ function AddTab({ onAdded }: { onAdded: () => void }) {
       m.get(d.category)!.push(d);
     }
     return [...m.entries()];
-  }, [q]);
+  }, [q, lang]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <>
-      <input className="search" placeholder={t('add.search')} value={q} onChange={(e) => setQ(e.target.value)} />
+      <input className="search" placeholder={t('add.search')} value={q} onChange={(e) => setQ(e.target.value)} aria-label={t('add.search')} />
       <Html className="tip" html={t('add.tip')} />
       {cats.map(([cat, list]) => (
         <div key={cat}>
@@ -144,7 +179,8 @@ function AddTab({ onAdded }: { onAdded: () => void }) {
                 className="lib-item"
                 data-tip={partDesc(d)}
                 onClick={() => {
-                  addPart({ ref: nextRef(project.parts, d.prefix), type: d.type, value: partDefaultValue(d), x: 0, y: 0, rot: 0 });
+                  const parts = useStore.getState().project.parts;
+                  addPart({ ref: nextRef(parts, d.prefix), type: d.type, value: partDefaultValue(d), x: 0, y: 0, rot: 0 });
                   onAdded();
                 }}
               >
@@ -165,7 +201,17 @@ function NetsTab() {
   const t = useT();
   const [newPins, setNewPins] = useState('');
   const [newName, setNewName] = useState('');
-  const setNets = (nets: typeof project.nets) => commit({ ...project, nets, tracks: [], vias: [] });
+  const setNets = (nets: typeof project.nets) => commit({ ...project, nets: nets.filter((n) => n.pins.length > 0), tracks: [], vias: [] });
+
+  const addNet = (e: React.FormEvent) => {
+    e.preventDefault();
+    const pins = newPins.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
+    if (!pins.length) return;
+    let name = newName.trim() || `NET${project.nets.length + 1}`;
+    while (project.nets.some((n) => n.name === name)) name += '_';
+    setNets([...project.nets, { name, pins }]);
+    setNewPins(''); setNewName('');
+  };
 
   return (
     <>
@@ -175,19 +221,28 @@ function NetsTab() {
         <div key={n.name + i} className="net">
           <div className="net-head">
             <span className="net-tag">{n.name}</span>
-            <button className="ghost small" data-tip={t('nets.delete')} onClick={() => setNets(project.nets.filter((_, j) => j !== i))}>✕</button>
+            <button className="ghost small" data-tip={t('nets.delete')} aria-label={t('nets.delete')} onClick={() => setNets(project.nets.filter((_, j) => j !== i))}>
+              <Icon name="close" size={13} />
+            </button>
           </div>
           <div className="pin-chips">
             {n.pins.map((p, k) => (
               <span key={p + k} className="pin-chip">
                 {p}
-                <button onClick={() => setNets(project.nets.map((x, j) => (j === i ? { ...x, pins: x.pins.filter((_, kk) => kk !== k) } : x)))}>×</button>
+                <button
+                  aria-label={`${p} ${t('part.delete')}`}
+                  onClick={() => setNets(project.nets.map((x, j) => (j === i ? { ...x, pins: x.pins.filter((_, kk) => kk !== k) } : x)))}
+                >
+                  <Icon name="close" size={11} />
+                </button>
               </span>
             ))}
             <input
               className="pin-add"
               placeholder={t('nets.addPin')}
+              aria-label={t('nets.addPin')}
               onKeyDown={(e) => {
+                if (e.nativeEvent.isComposing) return;
                 const v = (e.target as HTMLInputElement).value.trim();
                 if (e.key === 'Enter' && v) {
                   setNets(project.nets.map((x, j) => (j === i ? { ...x, pins: [...x.pins, v] } : x)));
@@ -199,70 +254,70 @@ function NetsTab() {
         </div>
       ))}
       <div className="section-label">{t('nets.new')}</div>
-      <div className="new-net">
-        <input placeholder={t('nets.name')} value={newName} onChange={(e) => setNewName(e.target.value)} />
-        <input placeholder={t('nets.pins')} value={newPins} onChange={(e) => setNewPins(e.target.value)} />
-        <button
-          className="primary"
-          disabled={!newPins.trim()}
-          onClick={() => {
-            const pins = newPins.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
-            let name = newName.trim() || `NET${project.nets.length + 1}`;
-            while (project.nets.some((n) => n.name === name)) name += '_';
-            setNets([...project.nets, { name, pins }]);
-            setNewPins(''); setNewName('');
-          }}
-        >{t('nets.add')}</button>
-      </div>
+      <form className="new-net" onSubmit={addNet}>
+        <input placeholder={t('nets.name')} value={newName} onChange={(e) => setNewName(e.target.value)} aria-label={t('nets.name')} />
+        <input placeholder={t('nets.pins')} value={newPins} onChange={(e) => setNewPins(e.target.value)} aria-label={t('nets.pins')} />
+        <button type="submit" className="primary" disabled={!newPins.trim()}>{t('nets.add')}</button>
+      </form>
     </>
   );
 }
 
-function CheckTab() {
-  const project = useStore((s) => s.project);
+function CheckTab({ issues }: { issues: DrcIssue[] }) {
+  const hasParts = useStore((s) => s.project.parts.length > 0);
   const select = useStore((s) => s.select);
-  const lang = useLang((s) => s.lang);
   const t = useT();
-  const issues = useMemo(() => runDrc(project), [project, lang]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!project.parts.length) return <div className="empty">{t('check.empty')}</div>;
+  if (!hasParts) return <div className="empty">{t('check.empty')}</div>;
   return (
     <>
       <div className="section-label">{t('check.title')}</div>
       {issues.map((it, i) => (
-        <button key={i} className={`issue ${it.level}`} onClick={() => it.refs?.[0] && select(it.refs[0])}>
-          <span>{it.message}</span>
-        </button>
+        it.refs?.[0] ? (
+          <button key={i} className={`issue ${it.level}`} onClick={() => select(it.refs![0])}>
+            <span>{it.message}</span>
+          </button>
+        ) : (
+          <div key={i} className={`issue ${it.level} static`}>
+            <span>{it.message}</span>
+          </div>
+        )
       ))}
       {issues.some((i) => i.level === 'error') && <div className="tip">{t('check.fixTip')}</div>}
     </>
   );
 }
 
-function OrderTab() {
+function OrderTab({ issues }: { issues: DrcIssue[] }) {
   const project = useStore((s) => s.project);
   const setBoard = useStore((s) => s.setBoard);
   const notify = useStore((s) => s.notify);
   const lang = useLang((s) => s.lang);
   const t = useT();
-  const issues = useMemo(() => runDrc(project), [project, lang]); // eslint-disable-line react-hooks/exhaustive-deps
   const errors = issues.filter((i) => i.level === 'error');
-  const [w, setW] = useState(project.board.width);
-  const [h, setH] = useState(project.board.height);
-  const bomRows = useMemo(
-    () => buildBom(project).replace('﻿', '').trim().split('\n').slice(1).map((r) => r.split('","').map((c) => c.replace(/"/g, ''))),
-    [project, lang], // eslint-disable-line react-hooks/exhaustive-deps
-  );
+  const [w, setW] = useState(String(project.board.width));
+  const [h, setH] = useState(String(project.board.height));
+  const rows = useMemo(() => bomItems(project), [project, lang]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const nw = Math.min(200, Math.max(10, Math.round(Number(w) || 0)));
+  const nh = Math.min(200, Math.max(10, Math.round(Number(h) || 0)));
+  const validSize = Number.isFinite(Number(w)) && Number.isFinite(Number(h)) && Number(w) >= 10 && Number(h) >= 10 && Number(w) <= 200 && Number(h) <= 200;
+  const applySize = (e: React.FormEvent) => {
+    e.preventDefault();
+    setW(String(nw));
+    setH(String(nh));
+    if (nw !== project.board.width || nh !== project.board.height) setBoard(nw, nh);
+  };
 
   return (
     <>
       <div className="section-label">{t('order.boardSize')}</div>
-      <div className="row">
-        <input type="number" min={10} max={200} value={w} onChange={(e) => setW(Number(e.target.value))} />
+      <form className="row" onSubmit={applySize}>
+        <input type="number" min={10} max={200} value={w} onChange={(e) => setW(e.target.value)} aria-label="board width mm" />
         <span>×</span>
-        <input type="number" min={10} max={200} value={h} onChange={(e) => setH(Number(e.target.value))} />
-        <button onClick={() => setBoard(w, h)} disabled={w === project.board.width && h === project.board.height} data-tip={t('tip.boardApply')}>{t('order.apply')}</button>
-      </div>
+        <input type="number" min={10} max={200} value={h} onChange={(e) => setH(e.target.value)} aria-label="board height mm" />
+        <button type="submit" disabled={!validSize || (nw === project.board.width && nh === project.board.height)} data-tip={t('tip.boardApply')}>{t('order.apply')}</button>
+      </form>
       <div className="tip">{t('order.sizeTip')}</div>
 
       <div className="section-label">{t('order.extras')}</div>
@@ -296,13 +351,15 @@ function OrderTab() {
         <li>{t('order.h4')}</li>
       </ol>
 
-      {bomRows.length > 0 && (
+      {rows.length > 0 && (
         <>
           <div className="section-label">{t('order.needed')}</div>
-          <table className="bom">
-            <thead><tr><th>{t('bom.part')}</th><th>{t('bom.value')}</th><th>{t('bom.qty')}</th><th>{t('bom.refs')}</th></tr></thead>
-            <tbody>{bomRows.map((r) => <tr key={r[0]}><td>{r[1]}</td><td>{r[2]}</td><td>{r[3]}</td><td>{r[4]}</td></tr>)}</tbody>
-          </table>
+          <div className="bom-wrap">
+            <table className="bom">
+              <thead><tr><th>{t('bom.part')}</th><th>{t('bom.value')}</th><th>{t('bom.qty')}</th><th>{t('bom.refs')}</th></tr></thead>
+              <tbody>{rows.map((r) => <tr key={r.no}><td>{r.name}</td><td>{r.value}</td><td>{r.qty}</td><td>{r.refs}</td></tr>)}</tbody>
+            </table>
+          </div>
         </>
       )}
     </>

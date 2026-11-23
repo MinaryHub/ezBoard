@@ -15,23 +15,33 @@ function available() {
 }
 
 function readAll() {
-  try {
-    const raw = JSON.parse(fs.readFileSync(file(), 'utf8'));
-    const out = {};
-    for (const p of PROVIDERS) if (typeof raw[p] === 'string' && raw[p]) out[p] = safeStorage.decryptString(Buffer.from(raw[p], 'base64'));
-    return out;
-  } catch {
-    return {};
+  let raw = {};
+  try { raw = JSON.parse(fs.readFileSync(file(), 'utf8')); } catch { return {}; }
+  const out = {};
+  for (const p of PROVIDERS) {
+    if (typeof raw[p] === 'string' && raw[p]) {
+      try { out[p] = safeStorage.decryptString(Buffer.from(raw[p], 'base64')); } catch { /* 손상된 키 하나만 건너뜀 */ }
+    }
   }
+  return out;
 }
 
-function writeOne(provider, value) {
+function writeAll(keys) {
   let raw = {};
   try { raw = JSON.parse(fs.readFileSync(file(), 'utf8')); } catch { /* 새 파일 */ }
-  if (value) raw[provider] = safeStorage.encryptString(value).toString('base64');
-  else delete raw[provider];
-  fs.mkdirSync(path.dirname(file()), { recursive: true });
-  fs.writeFileSync(file(), JSON.stringify(raw), { mode: 0o600 });
+  for (const p of PROVIDERS) {
+    const v = keys[p];
+    if (typeof v !== 'string' || v.length >= 1000) continue;
+    const trimmed = v.trim();
+    if (trimmed) raw[p] = safeStorage.encryptString(trimmed).toString('base64');
+    else delete raw[p];
+  }
+  const dest = file();
+  const tmp = `${dest}.tmp`;
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.writeFileSync(tmp, JSON.stringify(raw), { mode: 0o600 });
+  if (process.platform !== 'win32') try { fs.chmodSync(tmp, 0o600); } catch { /* 무시 */ }
+  fs.renameSync(tmp, dest);
 }
 
 function registerSecureKeyHandlers() {
@@ -39,10 +49,7 @@ function registerSecureKeyHandlers() {
   ipcMain.handle('keys:get', () => (available() ? readAll() : {}));
   ipcMain.handle('keys:set', (_event, keys) => {
     if (!available() || !keys || typeof keys !== 'object') return false;
-    for (const p of PROVIDERS) {
-      const v = keys[p];
-      if (typeof v === 'string' && v.length < 1000) writeOne(p, v.trim());
-    }
+    writeAll(keys);
     return true;
   });
 }

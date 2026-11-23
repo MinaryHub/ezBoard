@@ -14,14 +14,6 @@ import { partBox } from './lib/library';
 
 const emptyProject = (): Project => ({ name: t('app.newProject'), board: { width: 50, height: 40 }, parts: [], nets: [], tracks: [], vias: [], pour: true });
 
-function load<T>(key: string, fallback: T): T {
-  try {
-    const v = localStorage.getItem(key);
-    return v ? { ...fallback, ...JSON.parse(v) } : fallback;
-  } catch {
-    return fallback;
-  }
-}
 function save(key: string, v: unknown) {
   try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* 저장 실패는 무시 */ }
 }
@@ -34,6 +26,92 @@ const defaultSettings: AiSettings = {
   cliModels: { claude: '', gemini: '', openai: '' },
 };
 
+function loadSettings(): AiSettings {
+  try {
+    const raw = localStorage.getItem('ezboard.settings');
+    if (!raw) return defaultSettings;
+    const p = JSON.parse(raw);
+    if (!p || typeof p !== 'object') return defaultSettings;
+    const prov = p.provider === 'gemini' || p.provider === 'openai' || p.provider === 'claude' ? p.provider : defaultSettings.provider;
+    return {
+      provider: prov,
+      keys: { ...defaultSettings.keys, ...(p.keys && typeof p.keys === 'object' ? p.keys : {}) },
+      models: { ...defaultSettings.models, ...(p.models && typeof p.models === 'object' ? p.models : {}) },
+      auth: { ...defaultSettings.auth, ...(p.auth && typeof p.auth === 'object' ? p.auth : {}) },
+      cliModels: { ...defaultSettings.cliModels, ...(p.cliModels && typeof p.cliModels === 'object' ? p.cliModels : {}) },
+    };
+  } catch {
+    return defaultSettings;
+  }
+}
+
+export function sanitizeProject(raw: unknown): Project | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  if (!Array.isArray(r.parts)) return null;
+  const base = emptyProject();
+  const bw = Number((r.board as { width?: unknown } | undefined)?.width);
+  const bh = Number((r.board as { height?: unknown } | undefined)?.height);
+  const board = {
+    width: Number.isFinite(bw) ? Math.min(200, Math.max(10, bw)) : base.board.width,
+    height: Number.isFinite(bh) ? Math.min(200, Math.max(10, bh)) : base.board.height,
+  };
+  const parts: Part[] = r.parts
+    .filter((p): p is Record<string, unknown> => !!p && typeof p === 'object' && typeof (p as Record<string, unknown>).ref === 'string' && typeof (p as Record<string, unknown>).type === 'string')
+    .map((p) => ({
+      ref: String(p.ref),
+      type: String(p.type),
+      value: typeof p.value === 'string' ? p.value : '',
+      x: Number.isFinite(Number(p.x)) ? Number(p.x) : 0,
+      y: Number.isFinite(Number(p.y)) ? Number(p.y) : 0,
+      rot: Number.isFinite(Number(p.rot)) ? (((Math.round(Number(p.rot) / 90) * 90) % 360) + 360) % 360 : 0,
+      note: typeof p.note === 'string' ? p.note : undefined,
+    }));
+  const nets = Array.isArray(r.nets)
+    ? r.nets
+      .filter((n): n is { name: string; pins: unknown[] } => !!n && typeof n === 'object' && typeof (n as { name?: unknown }).name === 'string' && Array.isArray((n as { pins?: unknown }).pins))
+      .map((n) => ({ name: n.name, pins: n.pins.map(String) }))
+    : [];
+  const tracks = Array.isArray(r.tracks)
+    ? r.tracks.filter((tr) => !!tr && typeof tr === 'object' && Array.isArray((tr as { points?: unknown }).points))
+    : [];
+  const vias = Array.isArray(r.vias)
+    ? r.vias.filter((v) => !!v && typeof v === 'object' && Number.isFinite(Number((v as { x?: unknown }).x)) && Number.isFinite(Number((v as { y?: unknown }).y)))
+    : [];
+  const sch = r.sch && typeof r.sch === 'object' && !Array.isArray(r.sch) ? (r.sch as Record<string, SchPos>) : undefined;
+  return {
+    name: typeof r.name === 'string' ? r.name : base.name,
+    board,
+    parts,
+    nets,
+    tracks,
+    vias,
+    sch,
+    pour: typeof r.pour === 'boolean' ? r.pour : base.pour,
+    holes: typeof r.holes === 'boolean' ? r.holes : false,
+  };
+}
+
+function loadProjectStorage(): Project {
+  try {
+    const raw = localStorage.getItem('ezboard.project');
+    if (!raw) return emptyProject();
+    return sanitizeProject(JSON.parse(raw)) ?? emptyProject();
+  } catch {
+    return emptyProject();
+  }
+}
+
+function loadChatStorage(): ChatMessage[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem('ezboard.chat') ?? '[]');
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((m): m is ChatMessage => !!m && typeof m === 'object' && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string');
+  } catch {
+    return [];
+  }
+}
+
 export type ViewMode = 'edit' | 'real';
 export type Stage = 'sch' | 'pcb';
 export type Appearance = 'dark' | 'light';
@@ -42,6 +120,9 @@ interface State {
   project: Project;
   past: Project[];
   future: Project[];
+  dirty: boolean;
+  /** 새 프로젝트·열기·채팅 초기화 시 증가 — 진행 중 AI 응답 경합 차단 */
+  sessionGen: number;
   selected: string | null;
   messages: ChatMessage[];
   settings: AiSettings;
@@ -56,11 +137,12 @@ interface State {
   lastToast: string;
 
   commit: (p: Project, label?: string) => void;
+  markSaved: () => void;
   undo: () => void;
   redo: () => void;
   select: (ref: string | null) => void;
   movePart: (ref: string, x: number, y: number, record: boolean) => void;
-  updatePart: (ref: string, patch: Partial<Part>) => void;
+  updatePart: (ref: string, patch: Partial<Part>, record?: boolean) => void;
   rotatePart: (ref: string) => void;
   deletePart: (ref: string) => void;
   addPart: (part: Part) => void;
@@ -92,19 +174,22 @@ interface State {
 
 /** 부품이 움직이면 그 부품에 연결된 넷의 배선은 지운다 */
 function dropTracksOf(p: Project, ref: string): Project {
-  const nets = new Set(p.nets.filter((n) => n.pins.some((x) => x.toLowerCase().startsWith(ref.toLowerCase() + '.'))).map((n) => n.name));
-  return { ...p, tracks: p.tracks.filter((t) => !nets.has(t.net)), vias: p.vias.filter((v) => !nets.has(v.net)) };
+  const prefix = ref.toLowerCase() + '.';
+  const nets = new Set(p.nets.filter((n) => n.pins.some((x) => x.trim().toLowerCase().startsWith(prefix))).map((n) => n.name));
+  return { ...p, tracks: p.tracks.filter((tr) => !nets.has(tr.net)), vias: p.vias.filter((v) => !nets.has(v.net)) };
 }
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
 export const useStore = create<State>((set, get) => ({
-  project: load<Project>('ezboard.project', emptyProject()),
+  project: loadProjectStorage(),
   past: [],
   future: [],
+  dirty: false,
+  sessionGen: 0,
   selected: null,
-  messages: (() => { try { return JSON.parse(localStorage.getItem('ezboard.chat') ?? '[]'); } catch { return []; } })(),
-  settings: load('ezboard.settings', defaultSettings),
+  messages: loadChatStorage(),
+  settings: loadSettings(),
   view: 'edit',
   stage: 'sch',
   appearance: (() => { try { return localStorage.getItem('ezboard.appearance') === 'light' ? 'light' : 'dark'; } catch { return 'dark'; } })(),
@@ -114,20 +199,32 @@ export const useStore = create<State>((set, get) => ({
   toast: null,
   lastToast: '',
 
-  commit: (p) => set((s) => ({ project: p, past: [...s.past.slice(-50), s.project], future: [] })),
-  undo: () => set((s) => s.past.length ? { project: s.past[s.past.length - 1], past: s.past.slice(0, -1), future: [s.project, ...s.future] } : {}),
-  redo: () => set((s) => s.future.length ? { project: s.future[0], future: s.future.slice(1), past: [...s.past, s.project] } : {}),
+  commit: (p) => set((s) => ({ project: p, past: [...s.past.slice(-50), s.project], future: [], dirty: true })),
+  markSaved: () => set({ dirty: false }),
+  undo: () => set((s) => {
+    if (!s.past.length) return {};
+    const project = s.past[s.past.length - 1];
+    const selected = s.selected && project.parts.some((p) => p.ref === s.selected) ? s.selected : null;
+    return { project, past: s.past.slice(0, -1), future: [s.project, ...s.future], lastRoute: null, selected, dirty: true };
+  }),
+  redo: () => set((s) => {
+    if (!s.future.length) return {};
+    const project = s.future[0];
+    const selected = s.selected && project.parts.some((p) => p.ref === s.selected) ? s.selected : null;
+    return { project, future: s.future.slice(1), past: [...s.past, s.project], lastRoute: null, selected, dirty: true };
+  }),
   select: (ref) => set({ selected: ref }),
 
   movePart: (ref, x, y, record) => {
     const s = get();
     const parts = s.project.parts.map((p) => (p.ref === ref ? { ...p, x, y } : p));
     const next = dropTracksOf({ ...s.project, parts }, ref);
-    if (record) s.commit(next); else set({ project: next });
+    if (record) s.commit(next); else set({ project: next, dirty: true });
   },
-  updatePart: (ref, patch) => {
+  updatePart: (ref, patch, record = true) => {
     const s = get();
-    s.commit({ ...s.project, parts: s.project.parts.map((p) => (p.ref === ref ? { ...p, ...patch } : p)) });
+    const next = { ...s.project, parts: s.project.parts.map((p) => (p.ref === ref ? { ...p, ...patch } : p)) };
+    if (record) s.commit(next); else set({ project: next, dirty: true });
   },
   rotatePart: (ref) => {
     const s = get();
@@ -140,46 +237,54 @@ export const useStore = create<State>((set, get) => ({
     const lower = ref.toLowerCase() + '.';
     const sch = { ...(p.sch ?? {}) };
     delete sch[ref];
-    s.commit({
+    const next: Project = {
       ...p,
       sch,
       parts: p.parts.filter((x) => x.ref !== ref),
-      nets: p.nets.map((n) => ({ ...n, pins: n.pins.filter((x) => !x.toLowerCase().startsWith(lower)) })).filter((n) => n.pins.length > 0),
-    });
-    set({ selected: null });
+      nets: p.nets.map((n) => ({ ...n, pins: n.pins.filter((x) => !x.trim().toLowerCase().startsWith(lower)) })).filter((n) => n.pins.length > 1),
+    };
+    set((cur) => ({ project: next, past: [...cur.past.slice(-50), cur.project], future: [], selected: null, dirty: true }));
   },
   addPart: (part) => {
     const s = get();
     const parts = [...s.project.parts, part];
     const p = { ...s.project, parts, sch: layoutSchematic(parts, s.project.nets, s.project.sch ?? {}) };
-    s.commit(autoPlace(p, new Set(s.project.parts.map((x) => x.ref))));
-    set({ selected: part.ref });
+    const next = autoPlace(p, new Set(s.project.parts.map((x) => x.ref)));
+    set((cur) => ({ project: next, past: [...cur.past.slice(-50), cur.project], future: [], selected: part.ref, dirty: true }));
   },
 
   applyCircuit: (c) => {
     const s = get();
     const { project, route, grown } = buildFromCircuit(s.project, c);
-    s.commit(project);
-    set({ lastRoute: route, selected: null });
-    if (grown) s.notify(t('toast.boardGrown', { w: project.board.width, h: project.board.height }));
+    set((cur) => ({ project, past: [...cur.past.slice(-50), cur.project], future: [], lastRoute: route, selected: null, dirty: true }));
+    if (grown) get().notify(t('toast.boardGrown', { w: project.board.width, h: project.board.height }));
   },
   runAutoPlace: () => {
     const s = get();
-    s.commit(autoPlace({ ...s.project, tracks: [], vias: [] }, new Set()));
+    const next = autoPlace({ ...s.project, tracks: [], vias: [] }, new Set());
+    set((cur) => ({ project: next, past: [...cur.past.slice(-50), cur.project], future: [], lastRoute: null, dirty: true }));
   },
   runAutoRoute: () => {
     const s = get();
     const r = autoRoute({ ...s.project, tracks: [], vias: [] });
-    s.commit({ ...s.project, tracks: r.tracks, vias: r.vias });
-    set({ lastRoute: r });
+    const next = { ...s.project, tracks: r.tracks, vias: r.vias };
+    set((cur) => ({ project: next, past: [...cur.past.slice(-50), cur.project], future: [], lastRoute: r, dirty: true }));
     return r;
   },
-  clearRoutes: () => { const s = get(); s.commit({ ...s.project, tracks: [], vias: [] }); set({ lastRoute: null }); },
-  setBoard: (width, height) => { const s = get(); s.commit({ ...s.project, board: { width, height }, tracks: [], vias: [] }); },
+  clearRoutes: () => {
+    set((cur) => ({ project: { ...cur.project, tracks: [], vias: [] }, past: [...cur.past.slice(-50), cur.project], future: [], lastRoute: null, dirty: true }));
+  },
+  setBoard: (width, height) => {
+    const w = Math.min(200, Math.max(10, Number.isFinite(width) ? Math.round(width) : 50));
+    const h = Math.min(200, Math.max(10, Number.isFinite(height) ? Math.round(height) : 40));
+    set((cur) => ({ project: { ...cur.project, board: { width: w, height: h }, tracks: [], vias: [] }, past: [...cur.past.slice(-50), cur.project], future: [], lastRoute: null, dirty: true }));
+  },
   setPour: (on) => { const s = get(); s.commit({ ...s.project, pour: on }); },
   setHoles: (on) => {
     const s = get();
+    const hadTracks = s.project.tracks.length > 0;
     let p: Project = { ...s.project, holes: on };
+    let route: RouteResult | null = s.lastRoute;
     const holes = mountingHoles(p);
     if (on && !holes.length) s.notify(t('toast.holesSmall'));
     if (on && holes.length) {
@@ -187,28 +292,53 @@ export const useStore = create<State>((set, get) => ({
       const keep = new Set(p.parts.filter((x) => !hitsHole(holes, partBox(x), 0.5)).map((x) => x.ref));
       const moved = p.parts.length - keep.size;
       if (moved) p = autoPlace(p, keep);
-      if (p.tracks.length || moved) {
+      if (hadTracks) {
         const r = autoRoute({ ...p, tracks: [], vias: [] });
         p = { ...p, tracks: r.tracks, vias: r.vias };
-        set({ lastRoute: r });
+        route = r;
       }
       if (moved) s.notify(t('toast.holesMoved', { n: moved }));
     }
-    s.commit(p);
+    set((cur) => ({ project: p, past: [...cur.past.slice(-50), cur.project], future: [], lastRoute: route, dirty: true }));
   },
-  setName: (name) => set((s) => ({ project: { ...s.project, name } })),
-  newProject: () => { get().commit(emptyProject()); set({ messages: [], selected: null, lastRoute: null }); },
-  loadProject: (p) => { get().commit({ ...emptyProject(), ...p }); set({ selected: null }); },
+  setName: (name) => set((s) => ({ project: { ...s.project, name }, dirty: true })),
+  newProject: () => set((cur) => ({
+    project: emptyProject(),
+    past: [...cur.past.slice(-50), cur.project],
+    future: [],
+    dirty: false,
+    sessionGen: cur.sessionGen + 1,
+    messages: [],
+    selected: null,
+    lastRoute: null,
+  })),
+  loadProject: (p) => {
+    const clean = sanitizeProject(p);
+    if (!clean) return;
+    set((cur) => ({
+      project: clean,
+      past: [...cur.past.slice(-50), cur.project],
+      future: [],
+      dirty: false,
+      sessionGen: cur.sessionGen + 1,
+      selected: null,
+      lastRoute: null,
+    }));
+  },
   pushMessage: (m) => set((s) => ({ messages: [...s.messages, m] })),
-  clearChat: () => set({ messages: [] }),
-  setSettings: (settings) => { save('ezboard.settings', forLocalStorage(settings)); void saveKeys(settings.keys); set({ settings }); },
+  clearChat: () => set((s) => ({ messages: [], sessionGen: s.sessionGen + 1 })),
+  setSettings: (settings) => {
+    save('ezboard.settings', forLocalStorage(settings));
+    void saveKeys(settings.keys);
+    set({ settings });
+  },
   setView: (view) => set({ view }),
   setStage: (stage) => set({ stage }),
   setAppearance: (appearance) => { try { localStorage.setItem('ezboard.appearance', appearance); } catch { /* 무시 */ } set({ appearance }); },
   requestFit: () => set((s) => ({ fitTick: s.fitTick + 1 })),
   moveSchPart: (ref, x, y, current) => {
     const s = get();
-    const old = current[ref];
+    const old = current[ref] ?? { x, y, rot: 0 };
     s.commit({ ...s.project, sch: { ...current, [ref]: { ...old, x, y } } });
   },
   rotateSchPart: (ref) => {
@@ -233,18 +363,16 @@ export const useStore = create<State>((set, get) => ({
       if (r.reason === 'short') s.notify(t('toast.wireShort', { a: r.a!, b: r.b! }));
       return false;
     }
-    s.commit(r.project);
-    set({ lastRoute: null });
-    s.notify(r.merged ? t('toast.wireMerged', { a: r.merged, b: r.net }) : t('toast.wireAdded', { a: `${a.ref}.${a.name}`, b: `${b.ref}.${b.name}`, net: r.net }));
+    set((cur) => ({ project: r.project, past: [...cur.past.slice(-50), cur.project], future: [], lastRoute: null, dirty: true }));
+    get().notify(r.merged ? t('toast.wireMerged', { a: r.merged, b: r.net }) : t('toast.wireAdded', { a: `${a.ref}.${a.name}`, b: `${b.ref}.${b.name}`, net: r.net }));
     return true;
   },
   disconnectSchPin: (pin) => {
     const s = get();
     const r = disconnectPin(s.project, pin);
     if (!r) return;
-    s.commit(r.project);
-    set({ lastRoute: null });
-    s.notify(t('toast.wireRemoved', { pin: `${pin.ref}.${pin.name}`, net: r.net }));
+    set((cur) => ({ project: r.project, past: [...cur.past.slice(-50), cur.project], future: [], lastRoute: null, dirty: true }));
+    get().notify(t('toast.wireRemoved', { pin: `${pin.ref}.${pin.name}`, net: r.net }));
   },
   toggleLayer: (k) => set((s) => ({ showLayer: { ...s.showLayer, [k]: !s.showLayer[k] } })),
   notify: (toast) => {
@@ -262,8 +390,26 @@ void loadKeys(useStore.getState().settings.keys).then((r) => {
   save('ezboard.settings', forLocalStorage(settings));
 }).catch(() => { /* 보안 저장소를 못 쓰면 예전처럼 */ });
 
-// 자동 저장
+// 자동 저장 (프로젝트는 350ms 디바운스 + 창 닫힘 시 즉시 반영)
+let projectSaveTimer: ReturnType<typeof setTimeout> | undefined;
+function flushProjectSave() {
+  if (projectSaveTimer) {
+    clearTimeout(projectSaveTimer);
+    projectSaveTimer = undefined;
+    save('ezboard.project', useStore.getState().project);
+  }
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', flushProjectSave);
+  window.addEventListener('pagehide', flushProjectSave);
+}
 useStore.subscribe((s, prev) => {
-  if (s.project !== prev.project) save('ezboard.project', s.project);
+  if (s.project !== prev.project) {
+    clearTimeout(projectSaveTimer);
+    projectSaveTimer = setTimeout(() => {
+      projectSaveTimer = undefined;
+      save('ezboard.project', useStore.getState().project);
+    }, 350);
+  }
   if (s.messages !== prev.messages) save('ezboard.chat', s.messages.slice(-60));
 });

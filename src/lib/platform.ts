@@ -18,9 +18,9 @@ function blobToBase64(blob: Blob): Promise<string> {
  * 안드로이드는 앱 캐시에 쓴 뒤 공유 시트를 띄워 "파일에 저장 / 드라이브 / 메일" 등을 고르게 한다.
  */
 export async function saveFile(blob: Blob, name: string): Promise<void> {
+  const safe = name.replace(/[\\/:*?"<>|]+/g, '_').replace(/^\.+$/, '') || 'ezboard';
   if (isNative) {
     const [{ Filesystem, Directory }, { Share }] = await Promise.all([import('@capacitor/filesystem'), import('@capacitor/share')]);
-    const safe = name.replace(/[\\/:*?"<>|]+/g, '_');
     const res = await Filesystem.writeFile({ path: safe, data: await blobToBase64(blob), directory: Directory.Cache });
     try {
       await Share.share({ title: safe, files: [res.uri], dialogTitle: t('share.title') });
@@ -33,14 +33,9 @@ export async function saveFile(blob: Blob, name: string): Promise<void> {
   }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = name;
+  a.download = safe;
   document.body.appendChild(a);
   a.click();
   a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-}
-
-/** 외부 링크 열기 (안드로이드는 시스템 브라우저) */
-export function openExternal(url: string) {
-  window.open(url, '_blank', 'noopener');
+  setTimeout(() => URL.revokeObjectURL(a.href), 15_000);
 }

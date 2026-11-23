@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('ezboard', {
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   cliStatus: (provider) => ipcRenderer.invoke('ai:cli-status', provider),
   cliAsk: (provider, req) => ipcRenderer.invoke('ai:cli-ask', provider, req),
+  cliCancel: () => ipcRenderer.invoke('ai:cli-cancel'),
   keys: {
     supported: () => ipcRenderer.invoke('keys:supported'),
     get: () => ipcRenderer.invoke('keys:get'),
@@ -25,6 +26,7 @@ contextBridge.exposeInMainWorld('ezboard', {
     state: () => ipcRenderer.invoke('autoupdate:state'),
     check: () => ipcRenderer.invoke('autoupdate:check'),
     install: () => ipcRenderer.invoke('autoupdate:install'),
+    setEnabled: (on) => ipcRenderer.invoke('autoupdate:set-enabled', on),
     onState: (cb) => {
       const handler = (_event, s) => cb(s);
       ipcRenderer.on('autoupdate:state', handler);

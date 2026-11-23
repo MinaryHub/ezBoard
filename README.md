@@ -61,7 +61,7 @@ npx tsx scripts/sch-user.ts   # 회로도 배치/배선 품질 측정
 - 아이콘은 `logo/mark.svg`에서 `npm run icons`로 다시 만듭니다. 스토어용 스크린샷은 `npm run screenshots` (`screenshots/` 폴더).
 - 화면 언어: 한국어 / English (시스템 언어를 따르고, 상단 `EN`/`한` 버튼이나 ⚙️ 설정에서 바꿀 수 있음)
 
-## 도움말 메뉴: 업데이트 · 문의 · 후원
+## 도움말 메뉴: 업데이트 · GitHub 이슈·토론 · 후원
 
 - **업데이트 확인**: 시작할 때 하루 한 번, 그리고 도움말 ▸ 업데이트 확인에서 `MinaryHub/ezBoard`의 최신 GitHub 릴리스를 확인합니다 (Kreate와 같은 방식, 공개 저장소라 로그인 없이 읽음). 새 버전이 있으면 바뀐 점을 보여주고,
   - **자동 업데이트 (Windows 설치판, Linux AppImage, 1.3.1부터)**: `electron-updater`가 새 버전을 뒤에서 받아 두고, 상태 막대의 "업데이트 준비됨 · 다시 시작"을 누르거나 앱을 끌 때 설치합니다 (`electron/auto-update.cjs`). ⚙️ 설정 ▸ 업데이트에서 끌 수 있습니다. 릴리스에 `latest.yml`, `latest-linux.yml`, `.exe.blockmap`이 함께 있어야 하며, 자동 빌드(`release.yml`)가 올립니다.
@@ -69,5 +69,6 @@ npx tsx scripts/sch-user.ts   # 회로도 배치/배선 품질 측정
   - 안드로이드: 브라우저로 APK를 내려받게 합니다.
   - 릴리스 파일 이름 규칙 `ezBoard-<버전>-<플랫폼>.<확장자>`를 지켜야 맞는 파일을 고릅니다.
   - 시험: `localStorage.setItem('ezboard.debugVersion', '1.0.0')` 으로 예전 버전인 척할 수 있습니다.
-- **개발자에게 문의하기**: 앱 안 양식 → `services/contact` 전송 서버(Vercel) → Brevo 메일. 받는 주소와 메일 키는 서버 환경 변수에만 있습니다. 설정 방법은 [services/contact/README.md](services/contact/README.md). 서버 주소는 빌드 때 `VITE_CONTACT_URL`로 바꿀 수 있습니다.
+- **버그 신고 · 이슈 (GitHub Issues)**: 현재 앱 버전과 OS 정보가 미리 채워진 새 이슈 작성 페이지(`https://github.com/MinaryHub/ezBoard/issues/new`)를 엽니다.
+- **질문 · 토론 (GitHub Discussions)**: 사용법 질문, 회로 공유, 아이디어 토론을 위해 저장소 Discussions(`https://github.com/MinaryHub/ezBoard/discussions`)로 연결합니다.
 - **후원하기**: https://github.com/sponsors/MinaryHub (Kreate와 같은 페이지)

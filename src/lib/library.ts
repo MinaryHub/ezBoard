@@ -103,7 +103,7 @@ function radial(a: string, b: string, pitch: number, r: number, plusMark = false
     const px = -r - 0.9, py = -r + 0.6;
     silk.push(line(px - 0.5, py, px + 0.5, py), line(px, py - 0.5, px, py + 0.5));
   }
-  return { name: `Radial_D${r * 2}`, pads, silk, w: r * 2 + 1, h: r * 2 + 1 };
+  return { name: `Radial_D${r * 2}`, pads, silk, w: r * 2 + (plusMark ? 3.0 : 1), h: r * 2 + 1 };
 }
 
 function header(n: number): Footprint {
@@ -146,7 +146,7 @@ function nano(): Footprint {
     name: 'Arduino_Nano',
     pads,
     silk: [...rect(0, 0, 18, 43.2), ...rect(0, -20, 7.6, 6)],
-    w: 18.6, h: 44,
+    w: 18.6, h: 46.6,
   };
 }
 
@@ -286,7 +286,7 @@ const defs: PartDef[] = [
     type: 'potentiometer', name: '가변저항', category: '입력', prefix: 'RV', defaultValue: '10kΩ',
     desc: '손잡이를 돌려 저항값을 바꿉니다. 밝기·볼륨 조절에 쓰고, 가운데 핀(W)에서 전압이 나와요.',
     pinHelp: '1, W(가운데, 와이퍼), 3',
-    footprint: { ...to92(['1', 'W', '3']), name: 'Potentiometer_Trimmer', silk: rect(0, -1, 9.6, 6.4), w: 10.2, h: 7.6 },
+    footprint: { ...to92(['1', 'W', '3']), name: 'Potentiometer_Trimmer', silk: rect(0, -1, 9.6, 6.4), w: 10.2, h: 9.0 },
   },
   {
     type: 'ldr', name: '조도 센서 (CdS)', category: '입력', prefix: 'R', defaultValue: 'GL5528',

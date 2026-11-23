@@ -6,7 +6,7 @@ import { Heap, isPowerNet } from './router';
 
 export type NetKind = 'gnd' | 'power' | 'signal';
 export const netKind = (name: string): NetKind =>
-  /^(gnd|0v|vss|ground|agnd|dgnd)/i.test(name) ? 'gnd' : isPowerNet(name) ? 'power' : 'signal';
+  /^(?:gnd|0v|vss|ground|agnd|dgnd)\d*$/i.test(name.trim()) ? 'gnd' : isPowerNet(name) ? 'power' : 'signal';
 
 export interface Rect { x1: number; y1: number; x2: number; y2: number }
 
@@ -87,7 +87,6 @@ export function buildPinNet(parts: Part[], nets: Net[]): Map<string, string> {
 }
 
 const GAP = 3;
-const hit = (a: Rect, b: Rect, gap: number) => a.x1 < b.x2 + gap && a.x2 > b.x1 - gap && a.y1 < b.y2 + gap && a.y2 > b.y1 - gap;
 
 /** 위치가 없는 부품을 연결 관계를 보고 배치 */
 export function layoutSchematic(parts: Part[], nets: Net[], existing: Record<string, SchPos> = {}): Record<string, SchPos> {
@@ -98,16 +97,17 @@ export function layoutSchematic(parts: Part[], nets: Net[], existing: Record<str
   if (!toPlace.length) return pos;
 
   // 핀이 많은 부품(IC, 모듈)부터, 그다음 연결이 많은 순서
-  const deg = (p: Part) => symbolFor(p.type).pins.filter((x) => pinNet.has(`${p.ref}.${x.name}`)).length;
-  toPlace.sort((a, b) => symbolFor(b.type).pins.length - symbolFor(a.type).pins.length || deg(b) - deg(a));
+  const degMap = new Map(toPlace.map((p) => [p.ref, symbolFor(p.type).pins.filter((x) => pinNet.has(`${p.ref}.${x.name}`)).length]));
+  const pinCountMap = new Map(toPlace.map((p) => [p.ref, symbolFor(p.type).pins.length]));
+  toPlace.sort((a, b) => pinCountMap.get(b.ref)! - pinCountMap.get(a.ref)! || degMap.get(b.ref)! - degMap.get(a.ref)!);
 
   const placed: { part: Part; ext: Rect; pins: AbsPin[] }[] = parts
     .filter((p) => pos[p.ref])
     .map((p) => ({ part: p, ext: extentOf(p, pos[p.ref], pinNet), pins: absPins(p, pos[p.ref], pinNet) }));
 
   // 연결이 하나도 없는 부품은 맨 마지막에 아래쪽 줄에 따로 놓는다
-  const loose = toPlace.filter((p) => deg(p) === 0);
-  const linkedParts = toPlace.filter((p) => deg(p) > 0);
+  const loose = toPlace.filter((p) => degMap.get(p.ref)! === 0);
+  const linkedParts = toPlace.filter((p) => degMap.get(p.ref)! > 0);
 
   for (const part of linkedParts) {
     const sym = symbolFor(part.type);
@@ -124,32 +124,42 @@ export function layoutSchematic(parts: Part[], nets: Net[], existing: Record<str
       const reach = Math.max(self.x2 - self.x1, self.y2 - self.y1) + 4;
       let best: SchPos | null = null;
       let bestCost = Infinity;
+      const yMin = Math.floor(by1 - reach), yMax = Math.ceil(by2 + reach);
+      const xMin = Math.floor(bx1 - reach), xMax = Math.ceil(bx2 + reach);
       for (const rot of sym.rotatable ? [0, 90, 180, 270] : [0, 180]) {
         // (0,0) 기준으로 한 번만 계산하고 평행이동
         const ext0 = extentOf(part, { x: 0, y: 0, rot }, pinNet);
         const pins0 = absPins(part, { x: 0, y: 0, rot }, pinNet).filter((p) => p.net);
-        const targets = pins0.map((pin) => placed.flatMap((q) => q.pins.filter((t) => t.net === pin.net)));
+        const pinMeta = pins0.map((pin) => ({
+          pin,
+          isSignal: netKind(pin.net!) === 'signal',
+          dirV: DIRV[pin.dir],
+          targets: placed.flatMap((q) => q.pins.filter((t) => t.net === pin.net)),
+        }));
         const rotCost = rot === 90 || rot === 270 ? 0.3 : rot === 180 ? 0.6 : 0;
-        for (let y = Math.floor(by1 - reach); y <= Math.ceil(by2 + reach); y++) {
-          for (let x = Math.floor(bx1 - reach); x <= Math.ceil(bx2 + reach); x++) {
-            const ext = { x1: ext0.x1 + x, y1: ext0.y1 + y, x2: ext0.x2 + x, y2: ext0.y2 + y };
+        for (let y = yMin; y <= yMax; y++) {
+          const ey1 = ext0.y1 + y, ey2 = ext0.y2 + y;
+          for (let x = xMin; x <= xMax; x++) {
+            const ex1 = ext0.x1 + x, ex2 = ext0.x2 + x;
             let blocked = false;
-            for (const q of placed) if (hit(ext, q.ext, GAP)) { blocked = true; break; }
+            for (let pi = 0; pi < placed.length; pi++) {
+              const qe = placed[pi].ext;
+              if (ex1 < qe.x2 + GAP && ex2 > qe.x1 - GAP && ey1 < qe.y2 + GAP && ey2 > qe.y1 - GAP) { blocked = true; break; }
+            }
             if (blocked) continue;
             let cost = 0.04 * (Math.abs(x - cx) + Math.abs(y - cy)) + rotCost;
-            for (let k = 0; k < pins0.length && cost < bestCost; k++) {
-              const pin = pins0[k];
+            for (let k = 0; k < pinMeta.length && cost < bestCost; k++) {
+              const { pin, isSignal, dirV, targets } = pinMeta[k];
               const px = pin.x + x, py = pin.y + y;
               let bestD = Infinity, vx = 0, vy = 0;
-              for (const t of targets[k]) {
+              for (let ti = 0; ti < targets.length; ti++) {
+                const t = targets[ti];
                 const d = Math.abs(t.x - px) + Math.abs(t.y - py);
                 if (d < bestD) { bestD = d; vx = t.x - px; vy = t.y - py; }
               }
               if (bestD === Infinity) continue;
-              if (netKind(pin.net!) === 'signal') {
-                const [dx, dy] = DIRV[pin.dir];
-                cost += bestD + (vx * dx + vy * dy < 0 ? 4 : 0);
-              } else cost += bestD * 0.15;
+              if (isSignal) cost += bestD + (vx * dirV[0] + vy * dirV[1] < 0 ? 4 : 0);
+              else cost += bestD * 0.15;
             }
             if (cost < bestCost) { bestCost = cost; best = { x, y, rot }; }
           }
@@ -208,6 +218,18 @@ export function routeSchematic(parts: Part[], nets: Net[], pos: Record<string, S
   const ox = Math.floor(bx1) - M, oy = Math.floor(by1) - M;
   const W = Math.ceil(bx2) + M - ox + 1, H = Math.ceil(by2) + M - oy + 1;
   const N = W * H;
+
+  // 부품을 아주 멀리 끌어 그리드가 비정상적으로 커졌을 때 메모리 폭주/프리징 방지: 전원 기호·라벨로 안전 폴백
+  if (N > 200_000) {
+    for (const p of allPins) {
+      if (!p.net) continue;
+      const kind = netKind(p.net);
+      if (kind !== 'signal') out.power.push({ net: p.net, kind, x: p.x, y: p.y, dir: p.dir });
+      else out.labels.push({ net: p.net, x: p.x, y: p.y, dir: p.dir });
+    }
+    return out;
+  }
+
   const FREE = -1, BLOCK = -2;
   const hOwn = new Int32Array(N).fill(FREE);
   const vOwn = new Int32Array(N).fill(FREE);
@@ -235,9 +257,9 @@ export function routeSchematic(parts: Part[], nets: Net[], pos: Record<string, S
 
   const netId = new Map(nets.map((n, i) => [n.name, i]));
   let uniq = nets.length + 1;
+  // 전원 기호 금지 영역을 먼저 칠하고, 신호 핀 끝점은 나중에 써서 인접 전원 기호에 덮이지 않게 함
   for (const p of allPins) {
     const [dx, dy] = DIRV[p.dir];
-    // 핀 다리(끝점 안쪽)는 막기
     for (let k = 1; k < 4; k++) {
       const x = p.x - dx * k, y = p.y - dy * k;
       if (bodies.some((b) => x >= b.x1 && x <= b.x2 && y >= b.y1 && y <= b.y2)) break;
@@ -247,7 +269,10 @@ export function routeSchematic(parts: Part[], nets: Net[], pos: Record<string, S
       out.power.push({ net: p.net, kind: netKind(p.net), x: p.x, y: p.y, dir: p.dir });
       const len = Math.ceil(powerReach(p.net, p.dir));
       for (let k = 0; k <= len; k++) for (const s of [-1, 0, 1]) setBoth(p.x + dx * k + dy * s, p.y + dy * k + dx * s, BLOCK);
-    } else {
+    }
+  }
+  for (const p of allPins) {
+    if (!p.net || netKind(p.net) === 'signal') {
       setBoth(p.x, p.y, p.net ? netId.get(p.net)! : uniq++);
     }
   }
@@ -269,7 +294,14 @@ export function routeSchematic(parts: Part[], nets: Net[], pos: Record<string, S
 
   for (const { n, pins } of signalNets) {
     const net = netId.get(n.name)!;
-    const tree = new Set<number>([idx(pins[0].x, pins[0].y)]);
+    const rootCell = idx(pins[0].x, pins[0].y);
+    const tree = new Set<number>([rootCell]);
+    // 트리의 바운딩 박스로 허용 휴리스틱(admissible) 계산
+    let tMinX = pins[0].x, tMaxX = pins[0].x, tMinY = pins[0].y, tMaxY = pins[0].y;
+    const hToTree = (cx: number, cy: number) =>
+      (cx < tMinX ? tMinX - cx : cx > tMaxX ? cx - tMaxX : 0) +
+      (cy < tMinY ? tMinY - cy : cy > tMaxY ? cy - tMaxY : 0);
+
     const rest = pins.slice(1).sort((a, b) => Math.abs(a.x - pins[0].x) + Math.abs(a.y - pins[0].y) - (Math.abs(b.x - pins[0].x) + Math.abs(b.y - pins[0].y)));
     let labeledRoot = false;
     for (const pin of rest) {
@@ -280,33 +312,43 @@ export function routeSchematic(parts: Part[], nets: Net[], pos: Record<string, S
       const heap = new Heap();
       const s0 = start * 5 + 4;
       g[s0] = 0;
-      heap.push(0, s0);
+      heap.push(hToTree(pin.x, pin.y), s0);
       let found = -1;
-      while (heap.size) {
+      let iter = 0;
+      while (heap.size && iter++ < 120_000) {
         const s = heap.pop();
+        const gs = g[s];
         const dirIn = s % 5;
         const i = (s - dirIn) / 5;
+        const gx = i % W, gy = (i / W) | 0;
+        const x = gx + ox, y = gy + oy;
+        if (heap.lastKey > gs + hToTree(x, y) + 1e-3) continue;
         if (i !== start && tree.has(i)) { found = s; break; }
-        const gs = g[s];
-        const x = (i % W) + ox, y = Math.floor(i / W) + oy;
         for (let d = 0; d < 4; d++) {
           if (dirIn !== 4 && (d ^ 1) === dirIn && isH(d) === isH(dirIn)) continue; // 되돌아가기 금지
           const nx = x + DX[d], ny = y + DY[d];
           if (!inside(nx, ny)) continue;
           const ni = idx(nx, ny);
-          const own = ownerArr(d)[ni];
+          const arr = ownerArr(d);
+          const own = arr[ni];
           if (own !== FREE && own !== net) continue;
           const bend = dirIn !== 4 && isH(d) !== isH(dirIn);
-          if (bend || dirIn === 4) { const o = ownerArr(d)[i]; if (o !== FREE && o !== net) continue; }
+          if (bend || dirIn === 4) { const o = arr[i]; if (o !== FREE && o !== net) continue; }
           const other = (isH(d) ? vOwn : hOwn)[ni];
           const cross = other >= 0 && other !== net ? 3 : 0;
-          // 다른 넷 전선과 바로 붙어서 나란히 가면 약간 감점
+          // 다른 넷 전선과 바로 붙어서 나란히 가면 약간 감점 (행 경계 넘침 방지)
           let hug = 0;
-          const side = isH(d) ? [ni - W, ni + W] : [ni - 1, ni + 1];
-          for (const j of side) if (j >= 0 && j < N) { const o = ownerArr(d)[j]; if (o >= 0 && o !== net) hug += 0.4; }
+          const ngx = nx - ox, ngy = ny - oy;
+          if (isH(d)) {
+            if (ngy > 0) { const o = arr[ni - W]; if (o >= 0 && o !== net) hug += 0.4; }
+            if (ngy < H - 1) { const o = arr[ni + W]; if (o >= 0 && o !== net) hug += 0.4; }
+          } else {
+            if (ngx > 0) { const o = arr[ni - 1]; if (o >= 0 && o !== net) hug += 0.4; }
+            if (ngx < W - 1) { const o = arr[ni + 1]; if (o >= 0 && o !== net) hug += 0.4; }
+          }
           const cost = gs + 1 + (bend ? 2 : 0) + cross + near[ni] + hug;
           const ns = ni * 5 + d;
-          if (cost < g[ns]) { g[ns] = cost; prev[ns] = s; heap.push(cost, ns); }
+          if (cost < g[ns]) { g[ns] = cost; prev[ns] = s; heap.push(cost + hToTree(nx, ny), ns); }
         }
       }
       if (found < 0) {
@@ -325,8 +367,15 @@ export function routeSchematic(parts: Part[], nets: Net[], pos: Record<string, S
         bump(n.name, cells[k - 1]);
         bump(n.name, cells[k]);
       }
-      for (const c of cells) tree.add(c);
-      const pts: [number, number][] = cells.map((c) => [(c % W) + ox, Math.floor(c / W) + oy]);
+      for (const c of cells) {
+        tree.add(c);
+        const cx = (c % W) + ox, cy = ((c / W) | 0) + oy;
+        if (cx < tMinX) tMinX = cx;
+        if (cx > tMaxX) tMaxX = cx;
+        if (cy < tMinY) tMinY = cy;
+        if (cy > tMaxY) tMaxY = cy;
+      }
+      const pts: [number, number][] = cells.map((c) => [(c % W) + ox, ((c / W) | 0) + oy]);
       out.wires.push({ net: n.name, points: simplify(pts) });
     }
   }
