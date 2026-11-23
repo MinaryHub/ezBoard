@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useStore } from './store';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { sanitizeProject, useStore } from './store';
 import PcbCanvas from './components/PcbCanvas';
 import SchematicCanvas from './components/SchematicCanvas';
 import ChatPanel from './components/ChatPanel';
@@ -7,24 +7,29 @@ import SidePanel, { type Tab } from './components/SidePanel';
 import SettingsModal from './components/SettingsModal';
 import Tooltip from './components/Tooltip';
 import Icon, { type IconName } from './components/Icon';
-import { AboutDialog, ContactDialog, UpdateDialog } from './components/HelpDialogs';
+import { AboutDialog, UpdateDialog } from './components/HelpDialogs';
 import { autoCheck, type UpdateInfo } from './lib/update';
 import { initAutoUpdate, useAutoUpdate } from './lib/autoupdate';
-import { APP_VERSION, SPONSORS_URL, openExternal } from './lib/meta';
-import { runDrc, unroutedCount } from './lib/drc';
-import type { Project } from './types';
+import { APP_VERSION, DISCUSSIONS_URL, SPONSORS_URL, newIssueUrl, openExternal } from './lib/meta';
+import { runDrc } from './lib/drc';
 import { saveFile } from './lib/platform';
 import { useLang, useT, type TKey } from './i18n';
 
 type StepKey = 'circuit' | 'place' | 'route' | 'check' | 'order';
+
+function Toast() {
+  const toast = useStore((s) => s.toast);
+  if (!toast) return null;
+  return <div className="toast" role="status" aria-live="polite">{toast}</div>;
+}
 
 export default function App() {
   const project = useStore((s) => s.project);
   const view = useStore((s) => s.view);
   const stage = useStore((s) => s.stage);
   const show = useStore((s) => s.showLayer);
-  const toast = useStore((s) => s.toast);
   const appearance = useStore((s) => s.appearance);
+  const dirty = useStore((s) => s.dirty);
   const past = useStore((s) => s.past.length);
   const future = useStore((s) => s.future.length);
   const st = useStore.getState();
@@ -37,7 +42,7 @@ export default function App() {
   const fileRef = useRef<HTMLInputElement>(null);
   const lastMsg = useStore((s) => s.lastToast);
   const [helpOpen, setHelpOpen] = useState(false);
-  const [dialog, setDialog] = useState<'update' | 'contact' | 'about' | null>(null);
+  const [dialog, setDialog] = useState<'update' | 'about' | null>(null);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const auto = useAutoUpdate((s) => s.state);
   const helpRef = useRef<HTMLDivElement>(null);
@@ -56,17 +61,17 @@ export default function App() {
     window.addEventListener('keydown', esc);
     return () => { window.removeEventListener('pointerdown', close, true); window.removeEventListener('keydown', esc); };
   }, [helpOpen]);
-  const openDialog = (d: 'update' | 'contact' | 'about') => { setHelpOpen(false); setDialog(d); };
+  const openDialog = (d: 'update' | 'about') => { setHelpOpen(false); setDialog(d); };
 
   useEffect(() => { document.documentElement.dataset.appearance = appearance; }, [appearance]);
 
   const issues = useMemo(() => runDrc(project), [project, lang]); // eslint-disable-line react-hooks/exhaustive-deps
   const status = useMemo(() => {
     const placeOk = project.parts.length > 0 && !issues.some((i) => i.code === 'overlap' || i.code === 'offboard');
-    const routeOk = placeOk && project.tracks.length > 0 && unroutedCount(project) === 0;
+    const routeOk = placeOk && project.tracks.length > 0 && !issues.some((i) => i.code === 'unrouted' || i.code === 'noTracks');
     const checkOk = routeOk && !issues.some((i) => i.level === 'error');
     return { circuit: project.parts.length > 0, place: placeOk, route: routeOk, check: checkOk };
-  }, [project, issues]);
+  }, [project.parts.length, project.tracks.length, issues]);
   const errorCount = issues.filter((i) => i.level === 'error').length;
 
   const runRoute = () => {
@@ -78,22 +83,39 @@ export default function App() {
   const steps: { key: StepKey; done: boolean; action: () => void }[] = [
     { key: 'circuit', done: status.circuit, action: () => { st.setStage('sch'); setPane('stage'); } },
     { key: 'place', done: status.place, action: () => { st.setStage('pcb'); setTab('part'); setPane('stage'); } },
-    { key: 'route', done: status.route, action: () => { st.setStage('pcb'); setPane('stage'); runRoute(); } },
+    { key: 'route', done: status.route, action: () => { st.setStage('pcb'); setPane('stage'); if (!project.tracks.length) runRoute(); } },
     { key: 'check', done: status.check, action: () => { setTab('check'); setPane('side'); } },
     { key: 'order', done: false, action: () => { setTab('order'); setPane('side'); } },
   ];
   const current = steps.findIndex((s) => !s.done);
 
-  const saveProject = () => {
-    const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' });
-    saveFile(blob, `${project.name || 'ezboard'}.ezboard.json`).catch((e) => st.notify(t('toast.saveFail', { msg: e.message })));
-  };
+  const saveProject = useCallback(() => {
+    const p = useStore.getState().project;
+    const base = (p.name || 'ezboard').replace(/[\\/:*?"<>|\s]+/g, '_') || 'ezboard';
+    const blob = new Blob([JSON.stringify(p, null, 2)], { type: 'application/json' });
+    saveFile(blob, `${base}.ezboard.json`)
+      .then(() => useStore.getState().markSaved())
+      .catch((e) => useStore.getState().notify(t('toast.saveFail', { msg: e.message })));
+  }, [t]);
+
+  // Ctrl/Cmd+S 저장 단축키
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        saveProject();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [saveProject]);
+
   const openFile = async (f: File) => {
     try {
-      const p = JSON.parse(await f.text()) as Project;
-      if (!Array.isArray(p.parts)) throw new Error();
-      st.loadProject(p);
-      st.notify(t('toast.opened', { name: p.name }));
+      const clean = sanitizeProject(JSON.parse(await f.text()));
+      if (!clean) throw new Error();
+      st.loadProject(clean);
+      st.notify(t('toast.opened', { name: clean.name }));
     } catch {
       st.notify(t('toast.notProject'));
     }
@@ -101,7 +123,13 @@ export default function App() {
 
   /** 리본 버튼: 아이콘 위, 글자 아래 */
   const R = ({ icon, label, tip, onClick, engaged, disabled, primary }: { icon: IconName; label: TKey; tip: TKey; onClick: () => void; engaged?: boolean; disabled?: boolean; primary?: boolean }) => (
-    <button className={`rbtn ${engaged ? 'engaged' : ''} ${primary ? 'engaged' : ''}`} onClick={onClick} disabled={disabled} data-tip={t(tip)}>
+    <button
+      className={`rbtn ${engaged ? 'engaged' : ''} ${primary ? 'primary-hint' : ''}`}
+      onClick={onClick}
+      disabled={disabled}
+      data-tip={t(tip)}
+      aria-pressed={engaged !== undefined ? engaged : undefined}
+    >
       <Icon name={icon} />{t(label)}
     </button>
   );
@@ -113,39 +141,40 @@ export default function App() {
 
   const realView = view === 'real';
   return (
-    <div className="app">
+    <div className={`app pane-${pane}`}>
       {/* ── 메뉴 막대 ── */}
       <header className="menubar">
         <div className="brand">
           <img src="./logo-mark.svg" alt="" /><span className="name">ezBoard</span>
-          <button className="ghost version" onClick={() => setDialog('about')} data-tip={t('tip.version', { v: APP_VERSION })}>v{APP_VERSION}</button>
+          <button className="ghost version" onClick={() => setDialog('about')} data-tip={t('tip.version', { v: APP_VERSION })} aria-label={t('help.about')}>v{APP_VERSION}</button>
         </div>
-        <button className="ghost mi" onClick={() => { if (!project.parts.length || confirm(t('top.confirmNew'))) st.newProject(); }} data-tip={t('tip.new')}><Icon name="new" size={16} /><span className="lbl">{t('top.new')}</span></button>
-        <button className="ghost mi" onClick={() => fileRef.current?.click()} data-tip={t('tip.open')}><Icon name="open" size={16} /><span className="lbl">{t('top.open')}</span></button>
-        <button className="ghost mi" onClick={saveProject} data-tip={t('tip.save')}><Icon name="save" size={16} /><span className="lbl">{t('top.save')}</span></button>
+        <button className="ghost mi" onClick={() => { if (!project.parts.length || confirm(t('top.confirmNew'))) st.newProject(); }} data-tip={t('tip.new')} aria-label={t('top.new')}><Icon name="new" size={16} /><span className="lbl">{t('top.new')}</span></button>
+        <button className="ghost mi" onClick={() => fileRef.current?.click()} data-tip={t('tip.open')} aria-label={t('top.open')}><Icon name="open" size={16} /><span className="lbl">{t('top.open')}</span></button>
+        <button className="ghost mi" onClick={saveProject} data-tip={t('tip.save')} aria-label={t('top.save')}><Icon name="save" size={16} /><span className="lbl">{t('top.save')}</span></button>
         <div className="menu-wrap" ref={helpRef}>
-          <button className={`ghost mi ${helpOpen ? 'open' : ''}`} onClick={() => setHelpOpen((o) => !o)} data-tip={helpOpen ? undefined : t('tip.help')} aria-haspopup="menu" aria-expanded={helpOpen}>
+          <button className={`ghost mi ${helpOpen ? 'open' : ''}`} onClick={() => setHelpOpen((o) => !o)} data-tip={helpOpen ? undefined : t('tip.help')} aria-label={t('help.menu')} aria-haspopup="menu" aria-expanded={helpOpen}>
             <Icon name="help" size={16} /><span className="lbl">{t('help.menu')}</span>
           </button>
           {helpOpen && (
             <div className="menu" role="menu">
               <button role="menuitem" onClick={() => openDialog('update')}><Icon name="download" size={15} />{t('help.update')}{updateInfo && <span className="menu-badge">{updateInfo.version}</span>}</button>
-              <button role="menuitem" onClick={() => openDialog('contact')}><Icon name="chat" size={15} />{t('help.contact')}</button>
-              <button role="menuitem" onClick={() => { setHelpOpen(false); openExternal(SPONSORS_URL); }}><Icon name="heart" size={15} />{t('help.sponsor')}</button>
+              <button role="menuitem" onClick={() => { setHelpOpen(false); void openExternal(newIssueUrl()); }}><Icon name="issue" size={15} />{t('help.issues')}</button>
+              <button role="menuitem" onClick={() => { setHelpOpen(false); void openExternal(DISCUSSIONS_URL); }}><Icon name="chat" size={15} />{t('help.discussions')}</button>
+              <button role="menuitem" onClick={() => { setHelpOpen(false); void openExternal(SPONSORS_URL); }}><Icon name="heart" size={15} />{t('help.sponsor')}</button>
               <div className="menu-sep" />
               <button role="menuitem" onClick={() => openDialog('about')}><Icon name="help" size={15} />{t('help.about')}<span className="menu-ver">v{APP_VERSION}</span></button>
             </div>
           )}
         </div>
-        <button className="ghost" onClick={st.undo} disabled={!past} data-tip={t('tip.undo')}><Icon name="undo" size={15} /></button>
-        <button className="ghost" onClick={st.redo} disabled={!future} data-tip={t('tip.redo')}><Icon name="redo" size={15} /></button>
+        <button className="ghost" onClick={st.undo} disabled={!past} data-tip={t('tip.undo')} aria-label={t('tip.undo')}><Icon name="undo" size={15} /></button>
+        <button className="ghost" onClick={st.redo} disabled={!future} data-tip={t('tip.redo')} aria-label={t('tip.redo')}><Icon name="redo" size={15} /></button>
         <div className="doc-tab" data-tip={t('tip.name')}>
-          <input value={project.name} onChange={(e) => st.setName(e.target.value)} aria-label="project name" />
-          {past > 0 && <span className="dirty" />}
+          <input value={project.name} onChange={(e) => st.setName(e.target.value)} aria-label={t('tip.name')} />
+          {dirty && <span className="dirty" />}
         </div>
         <div className="spacer" />
-        <button className="ghost" onClick={() => setLang(lang === 'ko' ? 'en' : 'ko')} data-tip={t('tip.lang')}><Icon name="globe" size={15} /><span className="lbl">{lang === 'ko' ? 'EN' : '한국어'}</span></button>
-        <button className="ghost" onClick={() => setSettingsOpen(true)} data-tip={t('tip.settings')}><Icon name="settings" size={15} /></button>
+        <button className="ghost" onClick={() => setLang(lang === 'ko' ? 'en' : 'ko')} data-tip={t('tip.lang')} aria-label={t('tip.lang')}><Icon name="globe" size={15} /><span className="lbl">{lang === 'ko' ? 'EN' : '한국어'}</span></button>
+        <button className="ghost" onClick={() => setSettingsOpen(true)} data-tip={t('tip.settings')} aria-label={t('tip.settings')}><Icon name="settings" size={15} /></button>
         <input ref={fileRef} type="file" accept=".json" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) openFile(f); e.target.value = ''; }} />
       </header>
 
@@ -153,7 +182,13 @@ export default function App() {
       <div className="ribbon">
         <nav className="ribbon-tabs">
           {steps.map((s, i) => (
-            <button key={s.key} className={`rtab ${s.done ? 'done' : ''} ${i === current ? 'current' : ''}`} onClick={s.action} data-tip={t(`tip.step.${s.key}` as TKey)}>
+            <button
+              key={s.key}
+              className={`rtab ${s.done ? 'done' : ''} ${i === current ? 'current' : ''}`}
+              onClick={s.action}
+              data-tip={t(`tip.step.${s.key}` as TKey)}
+              aria-current={i === current ? 'step' : undefined}
+            >
               <span className="n">{s.done ? '✓' : i + 1}</span>{t(`step.${s.key}` as TKey)}
             </button>
           ))}
@@ -237,16 +272,22 @@ export default function App() {
                 <span><i style={{ background: '#2b2f36' }} />{t('legend.gnd')}</span>
                 <span>{t('legend.dot')}</span>
               </div>
-            ) : (
+            ) : !realView ? (
               <div className="legend">
                 <span><i style={{ background: '#d9483b' }} />{t('legend.topTrack')}</span>
                 <span><i style={{ background: '#3b7dd9' }} />{t('legend.bottomTrack')}</span>
                 <span><i style={{ background: '#facc15' }} />{t('legend.unrouted')}</span>
               </div>
+            ) : (
+              <div className="legend">
+                <span><i style={{ background: '#2c8a50' }} />{t('legend.topTrack')}</span>
+                <span><i style={{ background: '#d9b44a' }} />PAD</span>
+                <span><i style={{ background: '#facc15' }} />{t('legend.unrouted')}</span>
+              </div>
             )}
           </div>
         </section>
-        <SidePanel tab={tab} setTab={setTab} errorCount={errorCount} />
+        <SidePanel tab={tab} setTab={setTab} issues={issues} errorCount={errorCount} />
         <nav className="mobile-nav">
           <button className={pane === 'chat' ? 'active' : ''} onClick={() => setPane('chat')}><Icon name="chat" size={20} />{t('nav.chat')}</button>
           <button className={pane === 'stage' ? 'active' : ''} onClick={() => setPane('stage')}><Icon name={stage === 'sch' ? 'schematic' : 'pcb'} size={20} />{stage === 'sch' ? t('nav.sch') : t('nav.pcb')}</button>
@@ -288,9 +329,8 @@ export default function App() {
 
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
       {dialog === 'update' && <UpdateDialog initial={updateInfo} onClose={() => setDialog(null)} />}
-      {dialog === 'contact' && <ContactDialog onClose={() => setDialog(null)} />}
       {dialog === 'about' && <AboutDialog onClose={() => setDialog(null)} />}
-      {toast && <div className="toast">{toast}</div>}
+      <Toast />
       <Tooltip />
     </div>
   );

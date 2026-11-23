@@ -63,5 +63,6 @@ export function textStrokes(text: string, x: number, y: number, h: number): [num
 }
 
 export function textWidth(text: string, h: number): number {
+  if (!text.length) return 0;
   return text.length * 5.5 * (h / 6) - 1.5 * (h / 6);
 }

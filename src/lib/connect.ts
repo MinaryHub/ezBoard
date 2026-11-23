@@ -35,7 +35,7 @@ function newNetName(nets: Net[]): string {
 const isRail = (name: string) => netKind(name) !== 'signal';
 
 export function connectPins(project: Project, a: PinId, b: PinId): ConnectResult {
-  if (key(a) === key(b)) return { ok: false, reason: 'samePin' };
+  if (key(a).toLowerCase() === key(b).toLowerCase()) return { ok: false, reason: 'samePin' };
   const na = netOfPin(project, a);
   const nb = netOfPin(project, b);
   if (na && nb && na.name === nb.name) return { ok: false, reason: 'same', a: na.name };
@@ -67,6 +67,6 @@ export function disconnectPin(project: Project, p: PinId): { project: Project; n
   if (!net) return null;
   const nets = project.nets
     .map((n) => (n.name === net.name ? { ...n, pins: n.pins.filter((x) => !samePad(project, x, p)) } : n))
-    .filter((n) => n.pins.length > 1);
+    .filter((n) => n.name !== net.name || n.pins.length > 1);
   return { net: net.name, project: dropTracks({ ...project, nets }, [net.name]) };
 }

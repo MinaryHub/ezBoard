@@ -1,6 +1,5 @@
 // 거버(RS-274X) + 엑셀론 드릴 + BOM 생성. JLCPCB, PCBWay 등에 그대로 업로드 가능
-import JSZip from 'jszip';
-import type { Project } from '../types';
+import type { Part, Project } from '../types';
 import { getDef, partBox, placedPads, resolvePin, rotatePoint, type PlacedPad } from './library';
 import { textStrokes, textWidth } from './font';
 import { VIA_D, VIA_DRILL } from './router';
@@ -10,6 +9,7 @@ import { partName } from './library.i18n';
 
 const SILK_W = 0.15;
 const MASK_EXP = 0.1;
+const GEN_VER = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '1.0';
 
 class Gerber {
   private aps = new Map<string, number>();
@@ -69,7 +69,7 @@ class Gerber {
   }
   toString(fileFunction: string) {
     const head = [
-      `%TF.GenerationSoftware,ezBoard,AI PCB,1.0*%`,
+      `%TF.GenerationSoftware,ezBoard,AI PCB,${GEN_VER}*%`,
       `%TF.FileFunction,${fileFunction}*%`,
       `%TF.FilePolarity,${this.polarity}*%`,
       '%FSLAX46Y46*%',
@@ -96,29 +96,39 @@ function silkFor(project: Project, g: Gerber) {
         g.circle(part.x + cx, part.y + cy, s.r, SILK_W);
       }
     }
-    const lp = refLabelPos(project, part.ref);
+    const lp = refLabelPosForPart(part, project.board);
     for (const st of textStrokes(part.ref, lp.x, lp.y, lp.h)) g.polyline(st, SILK_W);
   }
-  // 보드 이름
-  const name = project.name.replace(/[^A-Za-z0-9 _.\-+/]/g, '').slice(0, 24) || 'EZBOARD';
+  // 보드 이름 (한글만 있어 공백이 남는 경우 'EZBOARD'로 폴백)
+  const name = project.name.replace(/[^A-Za-z0-9 _.\-+/]/g, '').trim().slice(0, 24) || 'EZBOARD';
   const nh = 1.2;
   for (const st of textStrokes(name, 1.2, project.board.height - nh - 0.8, nh)) g.polyline(st, SILK_W);
+}
+
+/** 부품 객체만으로 참조 이름 위치 계산 (O(1)) */
+export function refLabelPosForPart(part: Part, board?: { width: number; height: number }) {
+  const b = partBox(part);
+  const h = 1.0;
+  const w = textWidth(part.ref, h);
+  let y = b.y1 - h - 0.3;
+  if (y < 0.5) y = b.y2 + 0.3;
+  let x = part.x - w / 2;
+  if (board) {
+    x = Math.max(0.5, Math.min(Math.max(0.5, board.width - w - 0.5), x));
+    y = Math.max(0.5, Math.min(Math.max(0.5, board.height - h - 0.5), y));
+  }
+  return { x, y, h, w };
 }
 
 /** 참조 이름(R1 등) 글자 위치. 화면 표시와 거버가 같은 위치를 쓴다 */
 export function refLabelPos(project: Project, ref: string) {
   const part = project.parts.find((p) => p.ref === ref)!;
-  const b = partBox(part);
-  const h = 1.0;
-  const w = textWidth(ref, h);
-  let y = b.y1 - h - 0.3;
-  if (y < 0.5) y = b.y2 + 0.3;
-  return { x: part.x - w / 2, y, h, w };
+  return refLabelPosForPart(part, project.board);
 }
 
 export function buildGerbers(project: Project): Record<string, string> {
   const H = project.board.height;
-  const mk = (name: string) => { const g = new Gerber(name); g.h = H; return g; };
+  const mk = (name: string, polarity = 'Positive') => { const g = new Gerber(name, polarity); g.h = H; return g; };
   const pads = project.parts.flatMap(placedPads);
 
   const files: Record<string, string> = {};
@@ -126,11 +136,12 @@ export function buildGerbers(project: Project): Record<string, string> {
     const cu = mk(`${side} copper`);
     pourInto(cu, project, side, pads);
     for (const p of pads) cu.flashPad(p);
-    for (const t of project.tracks.filter((t) => t.layer === side)) cu.polyline(t.points, t.width);
+    for (const tr of project.tracks.filter((tr) => tr.layer === side)) cu.polyline(tr.points, tr.width);
     for (const v of project.vias) cu.flashCircle(v.x, v.y, VIA_D);
     files[side === 'top' ? 'ezboard-F_Cu.gtl' : 'ezboard-B_Cu.gbl'] = cu.toString(side === 'top' ? 'Copper,L1,Top' : 'Copper,L2,Bot');
 
-    const mask = mk(`${side} mask`);
+    // 솔더마스크 개구부는 Gerber X2 규격상 Negative 극성
+    const mask = mk(`${side} mask`, 'Negative');
     for (const p of pads) mask.flashPad(p, MASK_EXP);
     files[side === 'top' ? 'ezboard-F_Mask.gts' : 'ezboard-B_Mask.gbs'] = mask.toString(side === 'top' ? 'Soldermask,Top' : 'Soldermask,Bot');
   }
@@ -160,9 +171,11 @@ function pourInto(g: Gerber, project: Project, side: 'top' | 'bottom', pads: Pla
   const isGnd = (p: PlacedPad) => netOf.get(`${p.ref}#${p.num}`) === gnd;
   const { width: w, height: h } = project.board;
   const e = POUR_EDGE;
+  if (w <= e * 2 || h <= e * 2) return;
+  const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
   const clearOthers = () => {
     for (const p of pads) if (!isGnd(p)) g.flashPad(p, POUR_CLEAR);
-    for (const t of project.tracks) if (t.layer === side && t.net !== gnd) g.polyline(t.points, t.width + POUR_CLEAR * 2);
+    for (const tr of project.tracks) if (tr.layer === side && tr.net !== gnd) g.polyline(tr.points, tr.width + POUR_CLEAR * 2);
     for (const v of project.vias) if (v.net !== gnd) g.flashCircle(v.x, v.y, VIA_D + POUR_CLEAR * 2);
     for (const [x, y] of mountingHoles(project)) g.flashCircle(x, y, HOLE_KEEP * 2);
   };
@@ -171,7 +184,15 @@ function pourInto(g: Gerber, project: Project, side: 'top' | 'bottom', pads: Pla
   clearOthers();
   for (const p of pads) if (isGnd(p)) g.flashPad(p, POUR_CLEAR);
   g.setDark(true);
-  for (const p of pads) if (isGnd(p)) for (const s of thermalSpokes(p)) g.polyline(s, SPOKE_W);
+  for (const p of pads) {
+    if (!isGnd(p)) continue;
+    for (const [a, b] of thermalSpokes(p)) {
+      g.polyline(
+        [[clamp(a[0], e, w - e), clamp(a[1], e, h - e)], [clamp(b[0], e, w - e), clamp(b[1], e, h - e)]],
+        SPOKE_W,
+      );
+    }
+  }
   // 다리가 다른 넷 가까이 뻗었으면 그 부분을 다시 지운다
   g.setDark(false);
   clearOthers();
@@ -188,7 +209,7 @@ function padNets(project: Project): Map<string, string> {
 /** 도금 없는 구멍(고정 나사) 드릴 파일 */
 function buildNpth(project: Project, holes: [number, number][]): string {
   const H = project.board.height;
-  const out = ['M48', '; NPTH (mounting holes) generated by ezBoard', 'FMAT,2', 'METRIC,TZ', `T1C${HOLE_D.toFixed(3)}`, '%', 'G90', 'G05', 'T1'];
+  const out = ['M48', '; NPTH (mounting holes) generated by ezBoard', 'FMAT,2', 'METRIC', `T1C${HOLE_D.toFixed(3)}`, '%', 'G90', 'G05', 'T1'];
   for (const [x, y] of holes) out.push(`X${x.toFixed(3)}Y${(H - y).toFixed(3)}`);
   out.push('T0', 'M30', '');
   return out.join('\n');
@@ -204,8 +225,8 @@ function buildDrill(project: Project, pads: PlacedPad[]): string {
   };
   for (const p of pads) if (p.drill > 0) add(p.drill, p.ax, p.ay);
   for (const v of project.vias) add(VIA_DRILL, v.x, v.y);
-  const tools = [...holes.keys()].sort();
-  const out = ['M48', '; DRILL file generated by ezBoard', 'FMAT,2', 'METRIC,TZ'];
+  const tools = [...holes.keys()].sort((a, b) => Number(a) - Number(b));
+  const out = ['M48', '; DRILL file generated by ezBoard', 'FMAT,2', 'METRIC'];
   tools.forEach((d, i) => out.push(`T${i + 1}C${d}`));
   out.push('%', 'G90', 'G05');
   tools.forEach((d, i) => {
@@ -216,7 +237,16 @@ function buildDrill(project: Project, pads: PlacedPad[]): string {
   return out.join('\n');
 }
 
-export function buildBom(project: Project): string {
+export interface BomItem {
+  no: number;
+  name: string;
+  value: string;
+  qty: number;
+  refs: string;
+  fp: string;
+}
+
+export function bomItems(project: Project): BomItem[] {
   const groups = new Map<string, { refs: string[]; name: string; value: string; fp: string }>();
   for (const p of project.parts) {
     const def = getDef(p.type);
@@ -224,14 +254,19 @@ export function buildBom(project: Project): string {
     if (!groups.has(key)) groups.set(key, { refs: [], name: def ? partName(def) : p.type, value: p.value, fp: def?.footprint.name ?? '' });
     groups.get(key)!.refs.push(p.ref);
   }
+  let i = 1;
+  return [...groups.values()].map((g) => ({ no: i++, name: g.name, value: g.value, qty: g.refs.length, refs: g.refs.join(' '), fp: g.fp }));
+}
+
+export function buildBom(project: Project): string {
   const esc = (s: string) => `"${s.replace(/"/g, '""')}"`;
   const rows = [[t('bom.no'), t('bom.part'), t('bom.value'), t('bom.qty'), t('bom.refs'), t('bom.fp')].map(esc).join(',')];
-  let i = 1;
-  for (const g of groups.values()) rows.push([String(i++), g.name, g.value, String(g.refs.length), g.refs.join(' '), g.fp].map(esc).join(','));
-  return '﻿' + rows.join('\n') + '\n';
+  for (const g of bomItems(project)) rows.push([String(g.no), g.name, g.value, String(g.qty), g.refs, g.fp].map(esc).join(','));
+  return '\uFEFF' + rows.join('\n') + '\n';
 }
 
 export async function buildZip(project: Project): Promise<Blob> {
+  const { default: JSZip } = await import('jszip');
   const zip = new JSZip();
   const gerbers = buildGerbers(project);
   const folder = zip.folder('gerber')!;
@@ -257,6 +292,7 @@ export async function buildZip(project: Project): Promise<Blob> {
 }
 
 export async function buildGerberOnlyZip(project: Project): Promise<Blob> {
+  const { default: JSZip } = await import('jszip');
   const zip = new JSZip();
   for (const [name, content] of Object.entries(buildGerbers(project))) zip.file(name, content);
   return zip.generateAsync({ type: 'blob' });

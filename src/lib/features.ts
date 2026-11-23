@@ -20,7 +20,7 @@ export const HOLE_KEEP = 3.2;
 export const HOLE_MIN_BOARD = 25;
 
 // schematic.ts의 netKind와 같은 규칙 (서로 import하면 순환이 생겨 따로 둔다)
-const GND_RE = /^(gnd|0v|vss|ground|agnd|dgnd)/i;
+const GND_RE = /^(?:gnd|0v|vss|ground|agnd|dgnd)\d*$/i;
 
 /** 채우기에 쓸 그라운드 넷 이름 (없으면 undefined) */
 export function pourNet(project: Project): string | undefined {

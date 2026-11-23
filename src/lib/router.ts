@@ -1,6 +1,6 @@
 // 2층 그리드 A* 자동 배선기
 import type { Layer, Project, Track, Via } from '../types';
-import { placedPads, type PlacedPad } from './library';
+import { placedPads, resolvePin, type PlacedPad } from './library';
 import { netConnections } from './geometry';
 import { HOLE_KEEP, mountingHoles } from './features';
 
@@ -14,7 +14,8 @@ export const VIA_DRILL = 0.4;
 const FREE = -1;
 const BLOCKED = -2;
 
-export const isPowerNet = (name: string) => /^(gnd|vcc|vdd|vin|v\+|5v|3v3|\+?\d+(\.\d+)?v|vbat|power)/i.test(name);
+export const isPowerNet = (name: string) =>
+  /^(?:gnd|0v|vss|ground|agnd|dgnd|vcc|avcc|dvcc|vdd|vin|vbus|vsys|vm|vbat|v\+|power|pwr|[+-]?\d+(?:\.\d+)?v|3v3|5v0?)\d*$/i.test(name.trim());
 
 export interface RouteResult {
   tracks: Track[];
@@ -25,6 +26,7 @@ export interface RouteResult {
 export class Heap {
   private k: number[] = [];
   private v: number[] = [];
+  lastKey = 0;
   get size() { return this.k.length; }
   push(key: number, val: number) {
     const k = this.k, v = this.v;
@@ -39,6 +41,7 @@ export class Heap {
   }
   pop(): number {
     const k = this.k, v = this.v;
+    this.lastKey = k[0];
     const top = v[0];
     const lk = k.pop()!, lv = v.pop()!;
     const n = k.length;
@@ -63,11 +66,18 @@ function routeOnce(project: Project, order: [string, PlacedPad, PlacedPad][]): R
   const H = Math.floor(board.height / PITCH) + 1;
   const N = W * H;
   const owner = [new Int32Array(N).fill(FREE), new Int32Array(N).fill(FREE)];
+  const thtPad = new Uint8Array(N);
   const netIds = new Map<string, number>();
   project.nets.forEach((n, i) => netIds.set(n.name, i));
 
-  const pinNet = new Map<string, number>();
-  for (const net of project.nets) for (const pin of net.pins) pinNet.set(pin.toLowerCase(), netIds.get(net.name)!);
+  // resolvePin과 동일한 규칙으로 패드별 넷 ID 매핑 (멀티패드 핀 번호 참조·공백 포함 일관성 보장)
+  const padNet = new Map<string, number>();
+  for (const net of project.nets) {
+    const id = netIds.get(net.name)!;
+    for (const pin of net.pins) {
+      for (const pad of resolvePin(project.parts, pin)) padNet.set(`${pad.ref}#${pad.num}`, id);
+    }
+  }
 
   // 보드 가장자리 금지 영역
   const edge = 0.6;
@@ -80,9 +90,9 @@ function routeOnce(project: Project, order: [string, PlacedPad, PlacedPad][]): R
       }
     }
 
-  // 고정 나사 구멍 주변 금지 영역 (나사 머리가 구리에 닿지 않게)
+  // 고정 나사 구멍 주변 금지 영역 (나사 머리가 구리에 닿지 않게, 직교 현 침범 여유 포함)
   for (const [hx, hy] of mountingHoles(project)) {
-    const r = HOLE_KEEP + TRACK_W / 2;
+    const r = HOLE_KEEP + TRACK_W / 2 + 0.15;
     for (let y = Math.max(0, Math.floor((hy - r) / PITCH)); y <= Math.min(H - 1, Math.ceil((hy + r) / PITCH)); y++)
       for (let x = Math.max(0, Math.floor((hx - r) / PITCH)); x <= Math.min(W - 1, Math.ceil((hx + r) / PITCH)); x++)
         if (Math.hypot(x * PITCH - hx, y * PITCH - hy) <= r) { owner[0][y * W + x] = BLOCKED; owner[1][y * W + x] = BLOCKED; }
@@ -101,15 +111,20 @@ function routeOnce(project: Project, order: [string, PlacedPad, PlacedPad][]): R
     const round = pad.shape === 'circle';
     for (let y = y0; y <= y1; y++)
       for (let x = x0; x <= x1; x++) {
-        if (round && Math.hypot(x * PITCH - pad.ax, y * PITCH - pad.ay) > pad.aw / 2 + extra) continue;
-        claim(0, y * W + x, net);
-        claim(1, y * W + x, net);
+        const px = x * PITCH, py = y * PITCH;
+        if (round && Math.hypot(px - pad.ax, py - pad.ay) > pad.aw / 2 + extra) continue;
+        const idx = y * W + x;
+        claim(0, idx, net);
+        claim(1, idx, net);
+        if (pad.drill > 0 && Math.abs(px - pad.ax) <= pad.aw / 2 + VIA_D / 2 && Math.abs(py - pad.ay) <= pad.ah / 2 + VIA_D / 2) {
+          thtPad[idx] = 1;
+        }
       }
   };
   let unconnectedId = project.nets.length + 1;
   for (const part of project.parts)
     for (const pad of placedPads(part)) {
-      const net = pinNet.get(`${part.ref}.${pad.pin}`.toLowerCase()) ?? pinNet.get(`${part.ref}.${pad.num}`.toLowerCase()) ?? unconnectedId++;
+      const net = padNet.get(`${part.ref}#${pad.num}`) ?? unconnectedId++;
       padHalo(pad, net, CLEARANCE + TRACK_W / 2);
     }
 
@@ -121,6 +136,7 @@ function routeOnce(project: Project, order: [string, PlacedPad, PlacedPad][]): R
 
   const tracks: Track[] = [];
   const vias: Via[] = [];
+  const viaSeen = new Set<string>();
   const failed: RouteResult['failed'] = [];
   const DX = [1, -1, 0, 0], DY = [0, 0, 1, -1];
   const S = 2 * N * 5;
@@ -136,18 +152,22 @@ function routeOnce(project: Project, order: [string, PlacedPad, PlacedPad][]): R
     const usable = wide
       ? (l: number, i: number) => ok1(l, i) && (i % W === 0 || ok1(l, i - 1)) && (i % W === W - 1 || ok1(l, i + 1)) && (i < W || ok1(l, i - W)) && (i >= N - W || ok1(l, i + W))
       : ok1;
-    const viaOk = (i: number) => {
-      const x = i % W, y = (i / W) | 0;
-      if (x < 1 || y < 1 || x >= W - 1 || y >= H - 1) return false;
-      for (const j of [i, i - 1, i + 1, i - W, i + W]) if (!usable(0, j) || !usable(1, j)) return false;
-      return true;
+    const viaOk = (i: number, x: number, y: number) => {
+      if (thtPad[i] || x < 1 || y < 1 || x >= W - 1 || y >= H - 1) return false;
+      return (
+        usable(0, i) && usable(1, i) &&
+        usable(0, i - 1) && usable(1, i - 1) &&
+        usable(0, i + 1) && usable(1, i + 1) &&
+        usable(0, i - W) && usable(1, i - W) &&
+        usable(0, i + W) && usable(1, i + W)
+      );
     };
     g.fill(Infinity);
     prev.fill(-1);
     const heap = new Heap();
     const target = cellOf(b.ax, b.ay);
     const tx = target % W, ty = (target / W) | 0;
-    const h = (i: number) => (Math.abs((i % W) - tx) + Math.abs(((i / W) | 0) - ty)) * 1.0;
+    const h = (i: number) => (Math.abs((i % W) - tx) + Math.abs(((i / W) | 0) - ty)) * 0.6;
     const start = cellOf(a.ax, a.ay);
     for (const l of [0, 1]) {
       const s = (l * N + start) * 5 + 4;
@@ -158,12 +178,13 @@ function routeOnce(project: Project, order: [string, PlacedPad, PlacedPad][]): R
     let iter = 0;
     while (heap.size && iter++ < 400000) {
       const s = heap.pop();
+      const gs = g[s];
       const dir = s % 5;
       const node = (s - dir) / 5;
       const l = node >= N ? 1 : 0;
       const i = node - l * N;
+      if (heap.lastKey > gs + h(i) + 1e-3) continue;
       if (i === target) { found = s; break; }
-      const gs = g[s];
       const x = i % W, y = (i / W) | 0;
       for (let d = 0; d < 4; d++) {
         const nx = x + DX[d], ny = y + DY[d];
@@ -175,9 +196,9 @@ function routeOnce(project: Project, order: [string, PlacedPad, PlacedPad][]): R
         const ns = ((l * N + ni) * 5) + d;
         if (cost < g[ns]) { g[ns] = cost; prev[ns] = s; heap.push(cost + h(ni), ns); }
       }
-      // 비아로 층 이동
+      // 비아로 층 이동 (스루홀 패드 위에는 뚫지 않음)
       const ol = 1 - l;
-      if (viaOk(i)) {
+      if (viaOk(i, x, y)) {
         const ns = ((ol * N + i) * 5) + 4;
         const cost = gs + 10;
         if (cost < g[ns]) { g[ns] = cost; prev[ns] = s; heap.push(cost + h(i), ns); }
@@ -208,16 +229,28 @@ function routeOnce(project: Project, order: [string, PlacedPad, PlacedPad][]): R
     };
     for (let k = 0; k < path.length; k++) {
       const { l, i } = path[k];
-      const px = (i % W) * PITCH, py = ((i / W) | 0) * PITCH;
+      const gx = i % W, gy = (i / W) | 0;
+      const px = gx * PITCH, py = gy * PITCH;
       owner[l][i] = net;
       if (width > TRACK_W) {
-        // 굵은 전원선은 주변 칸도 점유
-        for (const j of [i - 1, i + 1, i - W, i + W]) if (j >= 0 && j < N && owner[l][j] === FREE) owner[l][j] = net;
+        // 굵은 전원선은 주변 칸도 점유 (행 경계 넘침 방지)
+        if (gx > 0 && owner[l][i - 1] === FREE) owner[l][i - 1] = net;
+        if (gx < W - 1 && owner[l][i + 1] === FREE) owner[l][i + 1] = net;
+        if (gy > 0 && owner[l][i - W] === FREE) owner[l][i - W] = net;
+        if (gy < H - 1 && owner[l][i + W] === FREE) owner[l][i + W] = net;
       }
       if (l !== segLayer) {
         flush(segLayer);
-        vias.push({ net: netName, x: px, y: py });
-        for (const j of [i, i - 1, i + 1, i - W, i + W]) { owner[0][j] = net; owner[1][j] = net; }
+        const vk = `${gx},${gy}`;
+        if (!viaSeen.has(vk)) {
+          viaSeen.add(vk);
+          vias.push({ net: netName, x: px, y: py });
+        }
+        owner[0][i] = net; owner[1][i] = net;
+        if (gx > 0) { owner[0][i - 1] = net; owner[1][i - 1] = net; }
+        if (gx < W - 1) { owner[0][i + 1] = net; owner[1][i + 1] = net; }
+        if (gy > 0) { owner[0][i - W] = net; owner[1][i - W] = net; }
+        if (gy < H - 1) { owner[0][i + W] = net; owner[1][i + W] = net; }
         seg = [[px, py]];
         segLayer = l;
       } else {
@@ -252,7 +285,7 @@ export function autoRoute(project: Project): RouteResult {
     for (const [a, b] of netConnections(project.parts, net)) conns.push([net.name, a, b]);
   // 짧은 연결부터, 전원은 나중에 (굵어서 길을 많이 막음)
   const len = (c: [string, PlacedPad, PlacedPad]) => Math.abs(c[1].ax - c[2].ax) + Math.abs(c[1].ay - c[2].ay);
-  conns.sort((x, y) => len(x) - len(y));
+  conns.sort((x, y) => (isPowerNet(x[0]) ? 1 : 0) - (isPowerNet(y[0]) ? 1 : 0) || len(x) - len(y));
 
   let best: RouteResult | null = null;
   for (let attempt = 0; attempt < 4; attempt++) {

@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
-import { useStore } from '../store';
+import { useEffect, useRef, useState } from 'react';
+import { useStore, type Appearance } from '../store';
 import { accountStatus, canUseAccount, listModels, PROVIDERS } from '../lib/ai';
-import { useLang, useT } from '../i18n';
+import { openExternal } from '../lib/meta';
+import { useLang, useT, type Lang } from '../i18n';
 import type { AuthMode, Provider } from '../types';
 import Icon from './Icon';
 import { useAutoUpdate } from '../lib/autoupdate';
@@ -17,10 +18,36 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const setAppearance = useStore((s) => s.setAppearance);
   const t = useT();
   const [draft, setDraft] = useState(settings);
+  const [draftLang, setDraftLang] = useState<Lang>(lang);
+  const [draftApp, setDraftApp] = useState<Appearance>(appearance);
+  const [draftAuto, setDraftAuto] = useState(autoEnabled);
+  const editedKeys = useRef<Set<Provider>>(new Set());
   const [models, setModels] = useState<Partial<Record<Provider, string[]>>>({});
   const [status, setStatus] = useState<Partial<Record<Provider, string>>>({});
   const [acct, setAcct] = useState<Partial<Record<Provider, { installed: boolean; loggedIn: boolean } | 'checking'>>>({});
   const accountOk = canUseAccount();
+
+  // Esc로 닫기
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  // 시작 시 보안 저장소에서 키를 늦게 읽어온 경우, 사용자가 수정하지 않은 칸에만 반영
+  useEffect(() => {
+    setDraft((d) => {
+      const keys = { ...d.keys };
+      let changed = false;
+      for (const p of Object.keys(PROVIDERS) as Provider[]) {
+        if (!editedKeys.current.has(p) && settings.keys[p] && !keys[p]) {
+          keys[p] = settings.keys[p];
+          changed = true;
+        }
+      }
+      return changed ? { ...d, keys } : d;
+    });
+  }, [settings.keys]);
 
   const checkAccount = async (p: Provider) => {
     setAcct((a) => ({ ...a, [p]: 'checking' }));
@@ -41,6 +68,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
 
   const setAuth = (p: Provider, mode: AuthMode) => {
     setDraft({ ...draft, auth: { ...draft.auth, [p]: mode } });
+    setStatus((s) => ({ ...s, [p]: undefined }));
     if (mode === 'account' && !acct[p]) checkAccount(p);
   };
 
@@ -55,45 +83,55 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const save = () => { setSettings(draft); onClose(); };
+  const save = () => {
+    if (draftLang !== lang) setLang(draftLang);
+    if (draftApp !== appearance) setAppearance(draftApp);
+    if (autoSupported && draftAuto !== autoEnabled) setAutoEnabled(draftAuto);
+    setSettings(draft);
+    onClose();
+  };
 
   return (
-    <div className="modal-bg" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2><Icon name="settings" size={16} />{t('set.title').replace('⚙️ ', '')}</h2>
+    <div className="modal-bg" onPointerDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="modal" role="dialog" aria-modal="true" aria-label={t('set.title')}>
+        <div className="modal-head">
+          <h2><Icon name="settings" size={16} />{t('set.title')}</h2>
+          <button type="button" className="ghost small" onClick={onClose} aria-label={t('common.close')}><Icon name="close" size={15} /></button>
+        </div>
         <p className="muted" dangerouslySetInnerHTML={{ __html: t('set.desc') }} />
         <div className="set-row">
           <span className="muted">{t('set.language')}</span>
           <div className="seg">
-            <button className={lang === 'ko' ? 'active' : ''} onClick={() => setLang('ko')}>한국어</button>
-            <button className={lang === 'en' ? 'active' : ''} onClick={() => setLang('en')}>English</button>
+            <button type="button" className={draftLang === 'ko' ? 'active' : ''} onClick={() => setDraftLang('ko')}>한국어</button>
+            <button type="button" className={draftLang === 'en' ? 'active' : ''} onClick={() => setDraftLang('en')}>English</button>
           </div>
         </div>
         <div className="set-row" data-tip={t('tip.appearance')}>
           <span className="muted">{t('set.appearance')}</span>
           <div className="seg">
-            <button className={appearance === 'dark' ? 'active' : ''} onClick={() => setAppearance('dark')}><Icon name="moon" size={14} />{t('set.dark')}</button>
-            <button className={appearance === 'light' ? 'active' : ''} onClick={() => setAppearance('light')}><Icon name="sun" size={14} />{t('set.light')}</button>
+            <button type="button" className={draftApp === 'dark' ? 'active' : ''} onClick={() => setDraftApp('dark')}><Icon name="moon" size={14} />{t('set.dark')}</button>
+            <button type="button" className={draftApp === 'light' ? 'active' : ''} onClick={() => setDraftApp('light')}><Icon name="sun" size={14} />{t('set.light')}</button>
           </div>
         </div>
         {autoSupported && (
           <div className="set-row" data-tip={t('tip.autoUpdate')}>
             <span className="muted">{t('set.update')}</span>
             <label className="check-row">
-              <input type="checkbox" checked={autoEnabled} onChange={(e) => setAutoEnabled(e.target.checked)} />{t('set.autoUpdate')}
+              <input type="checkbox" checked={draftAuto} onChange={(e) => setDraftAuto(e.target.checked)} />{t('set.autoUpdate')}
             </label>
           </div>
         )}
         {(Object.keys(PROVIDERS) as Provider[]).map((p) => (
           <div key={p} className={`provider-card ${draft.provider === p ? 'active' : ''}`}>
             <label className="provider-head">
-              <input type="radio" checked={draft.provider === p} onChange={() => setDraft({ ...draft, provider: p })} />
+              <input type="radio" name="ai-provider" checked={draft.provider === p} onChange={() => setDraft({ ...draft, provider: p })} />
               <b>{PROVIDERS[p].label}</b>
-              <a href={PROVIDERS[p].keyUrl} target="_blank" rel="noreferrer">{t('set.getKey')}</a>
+              <a href={PROVIDERS[p].keyUrl} onClick={(e) => { e.preventDefault(); void openExternal(PROVIDERS[p].keyUrl); }}>{t('set.getKey')}</a>
             </label>
             <div className="seg auth-seg">
-              <button className={draft.auth[p] !== 'account' ? 'active' : ''} onClick={() => setAuth(p, 'key')}>{t('set.authKey')}</button>
+              <button type="button" className={draft.auth[p] !== 'account' ? 'active' : ''} onClick={() => setAuth(p, 'key')}>{t('set.authKey')}</button>
               <button
+                type="button"
                 className={draft.auth[p] === 'account' ? 'active' : ''}
                 onClick={() => setAuth(p, 'account')}
                 disabled={!accountOk}
@@ -119,9 +157,12 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                     type="password"
                     placeholder={t('set.key', { hint: PROVIDERS[p].keyHint })}
                     value={draft.keys[p]}
-                    onChange={(e) => setDraft({ ...draft, keys: { ...draft.keys, [p]: e.target.value } })}
+                    onChange={(e) => {
+                      editedKeys.current.add(p);
+                      setDraft({ ...draft, keys: { ...draft.keys, [p]: e.target.value } });
+                    }}
                   />
-                  <button onClick={() => load(p)} disabled={!draft.keys[p]}>{t('set.test')}</button>
+                  <button type="button" onClick={() => load(p)} disabled={!draft.keys[p]}>{t('set.test')}</button>
                 </div>
                 <div className="row">
                   <span className="muted small">{t('set.model')}</span>
@@ -141,8 +182,8 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
           </div>
         ))}
         <div className="modal-actions">
-          <button onClick={onClose}>{t('set.cancel')}</button>
-          <button className="primary" onClick={save}>{t('set.save')}</button>
+          <button type="button" onClick={onClose}>{t('set.cancel')}</button>
+          <button type="button" className="primary" onClick={save}>{t('set.save')}</button>
         </div>
       </div>
     </div>
@@ -152,14 +193,14 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
 function AccountState({ p, st, onRecheck }: { p: Provider; st?: { installed: boolean; loggedIn: boolean } | 'checking'; onRecheck: () => void }) {
   const t = useT();
   const cli = PROVIDERS[p].cli;
-  const recheck = <button className="small" onClick={onRecheck}>{t('set.recheck')}</button>;
+  const recheck = <button type="button" className="small" onClick={onRecheck}>{t('set.recheck')}</button>;
   if (!st || st === 'checking') return <div className="small status">{t('set.loading')}</div>;
   if (st.loggedIn) return <div className="row small status">{t('set.accountOk', { product: cli.product })}<span className="spacer" />{recheck}</div>;
   return (
     <div className="small status account-help">
       <div className="row">{st.installed ? t('set.accountNeedLogin', { product: cli.product }) : t('set.accountNeedInstall', { product: cli.product })}<span className="spacer" />{recheck}</div>
       <ol>
-        {!st.installed && <li>{t('set.stepInstall')} <code>{cli.install}</code> <a href={cli.url} target="_blank" rel="noreferrer">↗</a></li>}
+        {!st.installed && <li>{t('set.stepInstall')} <code>{cli.install}</code> <a href={cli.url} onClick={(e) => { e.preventDefault(); void openExternal(cli.url); }}>↗</a></li>}
         <li>{t('set.stepLogin')} <code>{cli.login}</code></li>
         <li>{t('set.stepRecheck')}</li>
       </ol>

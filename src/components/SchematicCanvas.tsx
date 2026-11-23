@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store';
-import { t, useT } from '../i18n';
+import { useT } from '../i18n';
 import { partName } from '../lib/library.i18n';
 import { usePinchZoom } from './usePinchZoom';
 import { useRefitOnShow } from './useRefitOnShow';
@@ -22,7 +22,7 @@ const PIN_SNAP = 1.2;
 const TAP_PX = 8;
 
 /** 전원/접지 기호 */
-function PowerSymbol({ kind, net, x, y, dir, color }: { kind: string; net: string; x: number; y: number; dir: Dir; color: string }) {
+function PowerSymbol({ kind, net, x, y, dir, color, title }: { kind: string; net: string; x: number; y: number; dir: Dir; color: string; title: string }) {
   const [dx, dy] = DIRV[dir];
   const px = -dy, py = dx; // 수직 방향
   const ex = x + dx * 1.5, ey = y + dy * 1.5;
@@ -34,7 +34,7 @@ function PowerSymbol({ kind, net, x, y, dir, color }: { kind: string; net: strin
     return (
       <g stroke={color} strokeWidth={0.15} strokeLinecap="round">
         <path d={`M${x} ${y}L${ex} ${ey}${bars.join('')}`} fill="none" />
-        <title>{t('canvas.gndTitle', { net })}</title>
+        <title>{title}</title>
       </g>
     );
   }
@@ -52,7 +52,7 @@ function PowerSymbol({ kind, net, x, y, dir, color }: { kind: string; net: strin
         stroke="none"
         className="sch-text bold"
       >{net}</text>
-      <title>{t('canvas.powerTitle', { net })}</title>
+      <title>{title}</title>
     </g>
   );
 }
@@ -77,17 +77,18 @@ export default function SchematicCanvas() {
   const pos = useMemo(() => (drag?.kind === 'part' ? { ...basePos, [drag.ref]: drag.pos } : basePos), [basePos, drag]);
   const route = useMemo(() => routeSchematic(project.parts, project.nets, pos), [project.parts, project.nets, pos]);
 
-  const fit = () => {
+  const fit = useCallback(() => {
     const el = svgRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
+    if (r.width < 10 || r.height < 10) return;
     const b = route.bounds;
     const pad = 4;
     const bw = b.x2 - b.x1 + pad * 2, bh = b.y2 - b.y1 + pad * 2;
-    const aspect = r.width / Math.max(1, r.height);
+    const aspect = r.width / r.height;
     const w = Math.max(bw, bh * aspect, 30), h = w / aspect;
     setVb({ x: (b.x1 + b.x2) / 2 - w / 2, y: (b.y1 + b.y2) / 2 - h / 2, w, h });
-  };
+  }, [route.bounds]);
   // 부품 구성이 바뀌면 화면 맞추기
   const partKey = project.parts.map((p) => p.ref).join(',');
   const fitTick = useStore((s) => s.fitTick);
@@ -96,24 +97,31 @@ export default function SchematicCanvas() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (document.querySelector('.modal-bg')) return;
+      const el = svgRef.current;
+      if (!el || el.getBoundingClientRect().width < 10) return;
       const tag = (e.target as HTMLElement).tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === 'Escape') { setDrag(null); select(null); return; }
+      if (e.key === 'f' || e.key === 'F' || e.key === '0') { fit(); return; }
       if (!selected) return;
       if (e.key === 'r' || e.key === 'R') rotateSchPart(selected);
       if (e.key === 'Delete' || e.key === 'Backspace') deletePart(selected);
-      if (e.key === 'Escape') select(null);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selected, rotateSchPart, deletePart, select, undo, redo]);
+  }, [selected, rotateSchPart, deletePart, select, undo, redo, fit]);
 
   const toSvg = (e: { clientX: number; clientY: number }) => {
-    const el = svgRef.current!;
+    const el = svgRef.current;
+    const ctm = el?.getScreenCTM();
+    if (!el || !ctm) return { x: 0, y: 0 };
     const pt = el.createSVGPoint();
     pt.x = e.clientX; pt.y = e.clientY;
-    const p = pt.matrixTransform(el.getScreenCTM()!.inverse());
+    const p = pt.matrixTransform(ctm.inverse());
     return { x: p.x, y: p.y };
   };
   const pinch = usePinchZoom(toSvg, setVb, () => setDrag(null));
@@ -138,7 +146,7 @@ export default function SchematicCanvas() {
     }
     if (drag.kind === 'pan') {
       const r = svgRef.current!.getBoundingClientRect();
-      const scale = vb.w / r.width;
+      const scale = Math.max(vb.w / Math.max(1, r.width), vb.h / Math.max(1, r.height));
       setVb((v) => ({ ...v, x: drag.vx - (e.clientX - drag.sx) * scale, y: drag.vy - (e.clientY - drag.sy) * scale }));
     } else {
       const p = toSvg(e);
@@ -159,6 +167,7 @@ export default function SchematicCanvas() {
     }
     setDrag(null);
   };
+  const cancelDrag = () => setDrag(null);
 
   /** 이 위치에서 가장 가까운 핀 (끌기 중 놓을 곳) */
   const pinAt = (x: number, y: number, except?: AbsPin): AbsPin | null => {
@@ -176,7 +185,8 @@ export default function SchematicCanvas() {
   const closeMenu = useCallback(() => setMenu(null), []);
 
   const netColor = (net?: string) => (hoverNet && net === hoverNet ? HILITE : WIRE);
-  const connectedPins = new Set(route.pins.filter((p) => p.net).map((p) => `${p.ref}.${p.name}`));
+  const connectedPins = useMemo(() => new Set(route.pins.filter((p) => p.net).map((p) => `${p.ref}.${p.name}`)), [route.pins]);
+  const wireStrings = useMemo(() => route.wires.map((w) => w.points.map((p) => p.join(',')).join(' ')), [route.wires]);
 
   return (
     <>
@@ -188,13 +198,15 @@ export default function SchematicCanvas() {
       {...pinch}
       onPointerDown={(e) => {
         if (e.button !== 0 && e.button !== 1) return;
-        (e.target as Element).setPointerCapture?.(e.pointerId);
+        e.currentTarget.setPointerCapture?.(e.pointerId);
         setDrag({ kind: 'pan', sx: e.clientX, sy: e.clientY, vx: vb.x, vy: vb.y });
         setMenu(null);
         select(null);
       }}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onPointerCancel={cancelDrag}
+      onLostPointerCapture={cancelDrag}
       onDoubleClick={fit}
     >
       <defs>
@@ -207,8 +219,8 @@ export default function SchematicCanvas() {
       {/* 전선 */}
       {route.wires.map((w, i) => (
         <g key={`w${i}`} onPointerEnter={() => setHoverNet(w.net)} onPointerLeave={() => setHoverNet(null)}>
-          <polyline points={w.points.map((p) => p.join(',')).join(' ')} fill="none" stroke="transparent" strokeWidth={1} />
-          <polyline points={w.points.map((p) => p.join(',')).join(' ')} fill="none" stroke={netColor(w.net)} strokeWidth={hoverNet === w.net ? 0.28 : 0.18} strokeLinejoin="round" strokeLinecap="round" pointerEvents="none" />
+          <polyline points={wireStrings[i]} fill="none" stroke="transparent" strokeWidth={1} />
+          <polyline points={wireStrings[i]} fill="none" stroke={netColor(w.net)} strokeWidth={hoverNet === w.net ? 0.28 : 0.18} strokeLinejoin="round" strokeLinecap="round" pointerEvents="none" />
           <title>{tr('canvas.net', { net: w.net })}</title>
         </g>
       ))}
@@ -217,7 +229,11 @@ export default function SchematicCanvas() {
       {/* 전원 기호 */}
       {route.power.map((p, i) => (
         <g key={`p${i}`} onPointerEnter={() => setHoverNet(p.net)} onPointerLeave={() => setHoverNet(null)}>
-          <PowerSymbol {...p} color={hoverNet === p.net ? HILITE : p.kind === 'gnd' ? INK : '#b91c1c'} />
+          <PowerSymbol
+            {...p}
+            color={hoverNet === p.net ? HILITE : p.kind === 'gnd' ? INK : '#b91c1c'}
+            title={tr(p.kind === 'gnd' ? 'canvas.gndTitle' : 'canvas.powerTitle', { net: p.net })}
+          />
         </g>
       ))}
 
@@ -237,6 +253,7 @@ export default function SchematicCanvas() {
       {project.parts.map((part) => {
         const p = pos[part.ref];
         if (!p) return null;
+        const normRot = ((p.rot % 360) + 360) % 360;
         const sym = symbolFor(part.type);
         const body = absBody(part, p);
         const isSel = part.ref === selected;
@@ -249,7 +266,7 @@ export default function SchematicCanvas() {
             onPointerDown={(e) => {
               e.stopPropagation();
               if (e.button !== 0) return;
-              (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+              e.currentTarget.setPointerCapture?.(e.pointerId);
               const s = toSvg(e);
               select(part.ref);
               setDrag({ kind: 'part', ref: part.ref, dx: s.x - p.x, dy: s.y - p.y, pos: p });
@@ -258,7 +275,7 @@ export default function SchematicCanvas() {
           >
             <rect x={body.x1 - 0.6} y={body.y1 - 0.6} width={body.x2 - body.x1 + 1.2} height={body.y2 - body.y1 + 1.2}
               fill={isSel ? 'rgba(255,158,41,0.12)' : 'transparent'} stroke={isSel ? SEL : 'none'} strokeWidth={0.1} strokeDasharray="0.5 0.3" rx={0.4} />
-            <g transform={`translate(${p.x} ${p.y}) ${sym.rotatable ? `rotate(${p.rot})` : p.rot === 180 ? 'scale(-1 1)' : ''}`} stroke={color} strokeWidth={0.15} strokeLinecap="round" strokeLinejoin="round" fill="none">
+            <g transform={`translate(${p.x} ${p.y}) ${sym.rotatable ? `rotate(${normRot})` : normRot === 180 ? 'scale(-1 1)' : ''}`} stroke={color} strokeWidth={0.15} strokeLinecap="round" strokeLinejoin="round" fill="none">
               {sym.shapes.map((s, i) => {
                 if (s.k === 'path') return <path key={i} d={s.d} fill={s.fill ? color : 'none'} />;
                 if (s.k === 'circle') return <circle key={i} cx={s.cx} cy={s.cy} r={s.r} fill={s.fill ? color : 'none'} />;
@@ -270,13 +287,13 @@ export default function SchematicCanvas() {
             {sym.shapes.filter((s) => s.k === 'text').map((s, i) => {
               if (s.k !== 'text') return null;
               const size = s.size ?? 1;
-              if (!sym.rotatable && p.rot === 180) {
+              if (!sym.rotatable && normRot === 180) {
                 const anchor = s.anchor === 'start' ? 'end' : s.anchor === 'end' ? 'start' : 'middle';
                 return <text key={`t${i}`} x={p.x - s.x} y={p.y + s.y} fontSize={size} textAnchor={anchor} fill={color} className="sch-text">{s.t}</text>;
               }
-              if (!p.rot) return <text key={`t${i}`} x={p.x + s.x} y={p.y + s.y} fontSize={size} textAnchor={s.anchor ?? 'start'} fill={color} className="sch-text">{s.t}</text>;
+              if (!normRot) return <text key={`t${i}`} x={p.x + s.x} y={p.y + s.y} fontSize={size} textAnchor={s.anchor ?? 'start'} fill={color} className="sch-text">{s.t}</text>;
               // 회전된 기호: 글자 중심만 회전시키고 글자는 똑바로
-              const [cx, cy] = xformPoint(sym, s.x, s.y - 0.35 * size, p.rot);
+              const [cx, cy] = xformPoint(sym, s.x, s.y - 0.35 * size, normRot);
               return <text key={`t${i}`} x={p.x + cx} y={p.y + cy + 0.35 * size} fontSize={size} textAnchor="middle" fill={color} className="sch-text">{s.t}</text>;
             })}
             <text x={lab.x} y={lab.y1} fontSize={1.05} textAnchor={lab.anchor} fill={color} className="sch-text bold">{part.ref}</text>

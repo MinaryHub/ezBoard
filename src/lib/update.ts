@@ -27,10 +27,11 @@ export function isNewer(candidate: string, current: string): boolean {
 /** 운영체제·CPU에 맞는 설치 파일 고르기 (릴리스 파일 이름 규칙: ezBoard-<버전>-<플랫폼>.<확장자>) */
 export function pickAsset(assets: ReleaseAsset[], os: Platform, arch: string): ReleaseAsset | undefined {
   const find = (re: RegExp) => assets.find((a) => re.test(a.name));
+  const arm = arch === 'arm64';
   switch (os) {
-    case 'mac': return find(arch === 'arm64' ? /-mac-arm64\.dmg$/ : /-mac-x64\.dmg$/) ?? find(/\.dmg$/);
-    case 'windows': return find(/-windows-x64-setup\.exe$/) ?? find(/\.exe$/);
-    case 'linux': return find(/\.AppImage$/) ?? find(/\.deb$/);
+    case 'mac': return find(arm ? /-mac-arm64\.dmg$/ : /-mac-x64\.dmg$/) ?? find(/\.dmg$/);
+    case 'windows': return find(arm ? /-windows-arm64-setup\.exe$/ : /-windows-x64-setup\.exe$/) ?? find(/\.exe$/);
+    case 'linux': return find(arm ? /-linux-arm64\.AppImage$/ : /-linux-x64\.AppImage$/) ?? find(/\.AppImage$/) ?? find(/\.deb$/);
     case 'android': return find(/-android\.apk$/) ?? find(/\.apk$/);
     default: return undefined;
   }
@@ -74,13 +75,13 @@ export async function autoCheck(): Promise<UpdateInfo | null> {
   try {
     const last = Number(localStorage.getItem(LAST) || 0);
     if (Date.now() - last < DAY) return null;
-    localStorage.setItem(LAST, String(Date.now()));
   } catch { /* 저장소가 없으면 매번 확인 */ }
   try {
     const info = await checkForUpdate(AbortSignal.timeout(10_000));
+    try { localStorage.setItem(LAST, String(Date.now())); } catch { /* 무시 */ }
     if (info && info.version === skippedVersion()) return null;
     return info;
   } catch {
-    return null; // 오프라인 등: 조용히 넘어간다
+    return null; // 오프라인 등: 다음 시작 때 다시 시도하도록 LAST를 기록하지 않는다
   }
 }

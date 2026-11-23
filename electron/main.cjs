@@ -8,11 +8,12 @@ const { registerAutoUpdateHandlers } = require('./auto-update.cjs');
 const { registerSecureKeyHandlers } = require('./secure-keys.cjs');
 
 // file:// 페이지에서 부르는 바깥 API: CORS 응답 헤더를 보정한다
-const AI_HOSTS = ['api.anthropic.com', 'api.openai.com', 'generativelanguage.googleapis.com', 'ezboard-contact.vercel.app'];
+const AI_HOSTS = ['api.anthropic.com', 'api.openai.com', 'generativelanguage.googleapis.com'];
 
 // 업데이트 파일은 이 저장소의 GitHub 릴리스에서만 받는다
 const RELEASE_PREFIX = '/MinaryHub/ezBoard/releases/download/';
 const downloaded = new Set();
+const activeDownloads = new Map();
 
 function registerUpdateHandlers() {
   ipcMain.handle('update:download', async (event, { url, name }) => {
@@ -20,36 +21,55 @@ function registerUpdateHandlers() {
     if (u.protocol !== 'https:' || u.hostname !== 'github.com' || !u.pathname.startsWith(RELEASE_PREFIX)) {
       throw new Error('download source not allowed');
     }
-    if (typeof name !== 'string' || !/^[\w.-]+$/.test(name)) throw new Error('bad file name');
-    const dest = path.join(app.getPath('downloads'), name);
-    const part = `${dest}.part`;
-    const res = await net.fetch(url, { redirect: 'follow' });
-    if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
-    const total = Number(res.headers.get('content-length') || 0);
-    const out = fs.createWriteStream(part);
-    let received = 0;
-    let last = 0;
-    try {
-      const reader = res.body.getReader();
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        received += value.length;
-        if (!out.write(Buffer.from(value))) await once(out, 'drain');
-        const now = Date.now();
-        if (now - last > 150) { last = now; event.sender.send('update:progress', { received, total }); }
-      }
-      await new Promise((resolve, reject) => out.end((err) => (err ? reject(err) : resolve())));
-    } catch (e) {
-      out.destroy();
-      fs.rmSync(part, { force: true });
-      throw e;
+    if (typeof name !== 'string' || !/^[\w.-]+$/.test(name) || name === '.' || name === '..' || name.includes('..')) {
+      throw new Error('bad file name');
     }
-    if (total && received !== total) { fs.rmSync(part, { force: true }); throw new Error('download was cut short'); }
-    fs.renameSync(part, dest);
-    event.sender.send('update:progress', { received, total: total || received });
-    downloaded.add(dest);
-    return dest;
+    const dest = path.join(app.getPath('downloads'), name);
+    if (activeDownloads.has(dest)) return activeDownloads.get(dest);
+
+    const run = (async () => {
+      const part = `${dest}.part`;
+      const sendProgress = (p) => { if (!event.sender.isDestroyed()) event.sender.send('update:progress', p); };
+      const res = await net.fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(5 * 60_000) });
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+      const total = Number(res.headers.get('content-length') || 0);
+      const out = fs.createWriteStream(part);
+      let streamErr = null;
+      out.on('error', (err) => { streamErr = err; });
+      let received = 0;
+      let last = 0;
+      try {
+        const reader = res.body.getReader();
+        for (;;) {
+          if (streamErr) throw streamErr;
+          const { done, value } = await reader.read();
+          if (done) break;
+          received += value.length;
+          if (!out.write(Buffer.from(value))) {
+            await Promise.race([
+              once(out, 'drain'),
+              once(out, 'error').then(([err]) => { throw err; }),
+            ]);
+          }
+          const now = Date.now();
+          if (now - last > 150) { last = now; sendProgress({ received, total }); }
+        }
+        if (streamErr) throw streamErr;
+        await new Promise((resolve, reject) => out.end((err) => (err ? reject(err) : resolve())));
+      } catch (e) {
+        out.destroy();
+        fs.rmSync(part, { force: true });
+        throw e;
+      }
+      if (total && received !== total) { fs.rmSync(part, { force: true }); throw new Error('download was cut short'); }
+      fs.renameSync(part, dest);
+      sendProgress({ received, total: total || received });
+      downloaded.add(dest);
+      return dest;
+    })();
+
+    activeDownloads.set(dest, run);
+    try { return await run; } finally { activeDownloads.delete(dest); }
   });
 
   // 내려받은 설치 파일 열기: Windows는 설치 프로그램이 파일을 바꿀 수 있게 앱을 닫는다
@@ -90,11 +110,15 @@ function createWindow() {
 
   // 외부 링크(API 키 발급 페이지 등)는 기본 브라우저로 연다
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:/.test(url)) shell.openExternal(url);
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
+  const devOrigin = process.env.EZBOARD_DEV_URL ? new URL(process.env.EZBOARD_DEV_URL).origin : null;
   win.webContents.on('will-navigate', (e, url) => {
-    if (!url.startsWith('file:')) { e.preventDefault(); shell.openExternal(url); }
+    if (url.startsWith('file:')) return;
+    if (devOrigin && url.startsWith(devOrigin)) return;
+    e.preventDefault();
+    if (/^https:\/\//i.test(url)) shell.openExternal(url);
   });
 
   if (process.env.EZBOARD_DEV_URL) win.loadURL(process.env.EZBOARD_DEV_URL);
@@ -106,12 +130,12 @@ app.whenReady().then(() => {
   registerAutoUpdateHandlers();
   registerSecureKeyHandlers();
   registerCliAiHandlers();
-  // file:// 에서 AI API 호출 시 CORS 응답 헤더 보정
+  // file:// 에서 AI API 호출 시 CORS 응답 헤더 보정 (Authorization은 Fetch 표준상 *에 미포함)
   session.defaultSession.webRequest.onHeadersReceived({ urls: AI_HOSTS.map((h) => `https://${h}/*`) }, (details, cb) => {
     const headers = { ...details.responseHeaders };
     for (const k of Object.keys(headers)) if (k.toLowerCase().startsWith('access-control-allow-')) delete headers[k];
     headers['Access-Control-Allow-Origin'] = ['*'];
-    headers['Access-Control-Allow-Headers'] = ['*'];
+    headers['Access-Control-Allow-Headers'] = ['*, Authorization, Content-Type, x-api-key, anthropic-version, anthropic-dangerous-direct-browser-access, x-goog-api-key'];
     headers['Access-Control-Allow-Methods'] = ['GET, POST, OPTIONS'];
     cb({ responseHeaders: headers, statusLine: details.method === 'OPTIONS' ? 'HTTP/1.1 200 OK' : details.statusLine });
   });

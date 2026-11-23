@@ -26,8 +26,8 @@ export default function PinMenu({ x, y, pin, net, onDisconnect, onClose }: {
   }, [onClose]);
 
   // 화면 밖으로 나가지 않게
-  const left = Math.min(Math.max(8, x + 12), window.innerWidth - 228);
-  const top = Math.min(Math.max(8, y + 12), window.innerHeight - 120);
+  const left = Math.max(8, Math.min(x + 12, window.innerWidth - 228));
+  const top = Math.max(8, Math.min(y + 12, window.innerHeight - 120));
 
   return createPortal(
     <div className="pin-menu" style={{ left, top }} role="menu">

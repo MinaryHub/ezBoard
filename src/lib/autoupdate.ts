@@ -23,7 +23,8 @@ export const useAutoUpdate = create<AutoState>((set) => ({
   setEnabled: (enabled) => {
     try { localStorage.setItem(KEY, enabled ? 'on' : 'off'); } catch { /* 무시 */ }
     set({ enabled });
-    if (enabled) void checkNow();
+    void window.ezboard?.autoUpdate?.setEnabled?.(enabled).catch(() => {});
+    if (enabled) void checkNow().catch(() => {});
   },
 }));
 
@@ -37,15 +38,17 @@ export async function initAutoUpdate() {
   const supported = await bridge.supported().catch(() => false);
   if (!supported) return;
   bridge.onState((state) => useAutoUpdate.setState({ state }));
-  useAutoUpdate.setState({ supported, state: await bridge.state() });
-  if (useAutoUpdate.getState().enabled) void checkNow();
+  const enabled = useAutoUpdate.getState().enabled;
+  void bridge.setEnabled?.(enabled).catch(() => {});
+  useAutoUpdate.setState({ supported, state: await bridge.state().catch(() => ({ status: 'idle' as const })) });
+  if (enabled) void checkNow().catch(() => {});
 }
 
 /** 지금 확인하고, 새 버전이 있으면 받는다 */
 export async function checkNow(): Promise<AutoUpdateState | null> {
   const bridge = window.ezboard?.autoUpdate;
   if (!bridge || !useAutoUpdate.getState().supported) return null;
-  const state = await bridge.check();
+  const state = await bridge.check().catch((e) => ({ status: 'error' as const, message: String((e as Error)?.message ?? e) }));
   useAutoUpdate.setState({ state });
   return state;
 }
