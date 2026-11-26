@@ -8,6 +8,7 @@ import { getDef } from '../lib/library';
 import { symbolFor, xformPoint, type Dir } from '../lib/symbols';
 import { absBody, labelPlacement, layoutSchematic, routeSchematic, type AbsPin } from '../lib/schematic';
 import PinMenu from './PinMenu';
+import CanvasHud from './CanvasHud';
 import type { SchPos } from '../types';
 
 const INK = '#2b2f36';
@@ -60,17 +61,18 @@ function PowerSymbol({ kind, net, x, y, dir, color, title }: { kind: string; net
 export default function SchematicCanvas() {
   const project = useStore((s) => s.project);
   const selected = useStore((s) => s.selected);
-  const { select, moveSchPart, rotateSchPart, deletePart, undo, redo, connectSchPins, disconnectSchPin } = useStore.getState();
+  const hoverNet = useStore((s) => s.highlightNet);
+  const { select, setHighlightNet, moveSchPart, nudgeSchPart, rotateSchPart, duplicatePart, deletePart, undo, redo, connectSchPins, disconnectSchPin } = useStore.getState();
   const svgRef = useRef<SVGSVGElement>(null);
   const tr = useT();
   const [vb, setVb] = useState({ x: -40, y: -30, w: 80, h: 60 });
+  const [baseW, setBaseW] = useState(80);
   const [drag, setDrag] = useState<
     | { kind: 'part'; ref: string; dx: number; dy: number; pos: SchPos }
     | { kind: 'pan'; sx: number; sy: number; vx: number; vy: number }
     | { kind: 'wire'; from: AbsPin; x: number; y: number; sx: number; sy: number }
     | null
   >(null);
-  const [hoverNet, setHoverNet] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; pin: AbsPin } | null>(null);
 
   const basePos = useMemo(() => layoutSchematic(project.parts, project.nets, project.sch ?? {}), [project.parts, project.nets, project.sch]);
@@ -87,6 +89,7 @@ export default function SchematicCanvas() {
     const bw = b.x2 - b.x1 + pad * 2, bh = b.y2 - b.y1 + pad * 2;
     const aspect = r.width / r.height;
     const w = Math.max(bw, bh * aspect, 30), h = w / aspect;
+    setBaseW(w);
     setVb({ x: (b.x1 + b.x2) / 2 - w / 2, y: (b.y1 + b.y2) / 2 - h / 2, w, h });
   }, [route.bounds]);
   // 부품 구성이 바뀌면 화면 맞추기
@@ -94,6 +97,16 @@ export default function SchematicCanvas() {
   const fitTick = useStore((s) => s.fitTick);
   useEffect(fit, [partKey, fitTick]); // eslint-disable-line react-hooks/exhaustive-deps
   useRefitOnShow(svgRef, fit);
+
+  const zoomBy = useCallback((factor: number) => {
+    setVb((v) => {
+      const cx = v.x + v.w / 2, cy = v.y + v.h / 2;
+      const w = Math.min(600, Math.max(10, v.w * factor));
+      const f = w / v.w;
+      const h = v.h * f;
+      return { x: cx - w / 2, y: cy - h / 2, w, h };
+    });
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -104,16 +117,27 @@ export default function SchematicCanvas() {
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd') {
+        if (selected) { e.preventDefault(); duplicatePart(selected); }
+        return;
+      }
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === 'Escape') { setDrag(null); select(null); return; }
       if (e.key === 'f' || e.key === 'F' || e.key === '0') { fit(); return; }
+      if (e.key === '=' || e.key === '+') { zoomBy(0.8); return; }
+      if (e.key === '-') { zoomBy(1.25); return; }
       if (!selected) return;
+      const step = e.shiftKey ? 4 : 1;
+      if (e.key === 'ArrowLeft') { e.preventDefault(); nudgeSchPart(selected, -step, 0); return; }
+      if (e.key === 'ArrowRight') { e.preventDefault(); nudgeSchPart(selected, step, 0); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); nudgeSchPart(selected, 0, -step); return; }
+      if (e.key === 'ArrowDown') { e.preventDefault(); nudgeSchPart(selected, 0, step); return; }
       if (e.key === 'r' || e.key === 'R') rotateSchPart(selected);
       if (e.key === 'Delete' || e.key === 'Backspace') deletePart(selected);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selected, rotateSchPart, deletePart, select, undo, redo, fit]);
+  }, [selected, rotateSchPart, duplicatePart, deletePart, nudgeSchPart, select, undo, redo, fit, zoomBy]);
 
   const toSvg = (e: { clientX: number; clientY: number }) => {
     const el = svgRef.current;
@@ -218,7 +242,7 @@ export default function SchematicCanvas() {
 
       {/* 전선 */}
       {route.wires.map((w, i) => (
-        <g key={`w${i}`} onPointerEnter={() => setHoverNet(w.net)} onPointerLeave={() => setHoverNet(null)}>
+        <g key={`w${i}`} onPointerEnter={() => setHighlightNet(w.net)} onPointerLeave={() => setHighlightNet(null)}>
           <polyline points={wireStrings[i]} fill="none" stroke="transparent" strokeWidth={1} />
           <polyline points={wireStrings[i]} fill="none" stroke={netColor(w.net)} strokeWidth={hoverNet === w.net ? 0.28 : 0.18} strokeLinejoin="round" strokeLinecap="round" pointerEvents="none" />
           <title>{tr('canvas.net', { net: w.net })}</title>
@@ -228,7 +252,7 @@ export default function SchematicCanvas() {
 
       {/* 전원 기호 */}
       {route.power.map((p, i) => (
-        <g key={`p${i}`} onPointerEnter={() => setHoverNet(p.net)} onPointerLeave={() => setHoverNet(null)}>
+        <g key={`p${i}`} onPointerEnter={() => setHighlightNet(p.net)} onPointerLeave={() => setHighlightNet(null)}>
           <PowerSymbol
             {...p}
             color={hoverNet === p.net ? HILITE : p.kind === 'gnd' ? INK : '#b91c1c'}
@@ -242,7 +266,7 @@ export default function SchematicCanvas() {
         const [dx, dy] = DIRV[l.dir];
         const ex = l.x + dx * 1.2, ey = l.y + dy * 1.2;
         return (
-          <g key={`l${i}`} onPointerEnter={() => setHoverNet(l.net)} onPointerLeave={() => setHoverNet(null)}>
+          <g key={`l${i}`} onPointerEnter={() => setHighlightNet(l.net)} onPointerLeave={() => setHighlightNet(null)}>
             <path d={`M${l.x} ${l.y}L${ex} ${ey}`} stroke={netColor(l.net)} strokeWidth={0.18} />
             <text x={ex + (dx || 0) * 0.3} y={ey + (dy > 0 ? 1 : dy < 0 ? -0.4 : 0.35)} fontSize={0.95} textAnchor={dx < 0 ? 'end' : dx > 0 ? 'start' : 'middle'} fill={netColor(l.net)} className="sch-text bold">{l.net}</text>
           </g>
@@ -319,8 +343,8 @@ export default function SchematicCanvas() {
               setMenu(null);
               setDrag({ kind: 'wire', from: p, x: p.x, y: p.y, sx: e.clientX, sy: e.clientY });
             }}
-            onPointerEnter={() => p.net && setHoverNet(p.net)}
-            onPointerLeave={() => setHoverNet(null)}
+            onPointerEnter={() => p.net && setHighlightNet(p.net)}
+            onPointerLeave={() => setHighlightNet(null)}
           >
             <circle cx={p.x} cy={p.y} r={0.9} fill="transparent" />
             <circle className="dot" cx={p.x} cy={p.y} r={0.38} />
@@ -347,6 +371,16 @@ export default function SchematicCanvas() {
 
       {hoverNet && <text x={vb.x + vb.w - 1} y={vb.y + vb.h - 1} fontSize={vb.w / 60} textAnchor="end" fill={HILITE} className="sch-text bold">{tr('canvas.net', { net: hoverNet })}</text>}
     </svg>
+    <CanvasHud
+      zoomPct={Math.round((baseW / Math.max(1, vb.w)) * 100)}
+      onZoomIn={() => zoomBy(0.8)}
+      onZoomOut={() => zoomBy(1.25)}
+      onFit={fit}
+      selectedPart={selected ? project.parts.find((p) => p.ref === selected) : undefined}
+      onRotate={selected ? () => rotateSchPart(selected) : undefined}
+      onDuplicate={selected ? () => duplicatePart(selected) : undefined}
+      onDelete={selected ? () => deletePart(selected) : undefined}
+    />
     {menu && (
       <PinMenu
         x={menu.x} y={menu.y} pin={`${menu.pin.ref}.${menu.pin.name}`} net={menu.pin.net}

@@ -197,7 +197,7 @@ import { bomItems } from '../src/lib/gerber';
 import { isPowerNet } from '../src/lib/router';
 import { netKind, routeSchematic } from '../src/lib/schematic';
 import { connectPins, disconnectPin } from '../src/lib/connect';
-import { suggestBoardSize } from '../src/lib/geometry';
+import { findFreeSpot, suggestBoardSize } from '../src/lib/geometry';
 import { renderMarkdown } from '../src/lib/markdown';
 import { sanitizeProject } from '../src/store';
 
@@ -384,4 +384,15 @@ test('extractCircuit, renderMarkdown, and sanitizeProject handle edge cases safe
   assert.equal(san.parts[0].x, 0);
   assert.equal(san.parts[0].rot, 90);
 });
+
+test('findFreeSpot: places new/duplicated part without overlapping existing parts or mounting holes', () => {
+  const existing: Project['parts'] = [{ ref: 'R1', type: 'resistor', value: '1k', x: 25.4, y: 20.32, rot: 0 }];
+  const p = blank({ board: { width: 50, height: 40 }, holes: true, parts: existing });
+  const spot = findFreeSpot(p, existing[0], { x: 25.4, y: 20.32 });
+  const b1 = partBox(existing[0]);
+  const b2 = partBox({ ...existing[0], ref: 'R2', x: spot.x, y: spot.y });
+  assert.ok(b2.x2 < b1.x1 || b1.x2 < b2.x1 || b2.y2 < b1.y1 || b1.y2 < b2.y1, 'new spot must not overlap R1');
+  assert.ok(!hitsHole(mountingHoles(p), b2), 'new spot must not hit mounting holes');
+});
+
 

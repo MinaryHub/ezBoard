@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useStore } from '../store';
-import { getDef, LIBRARY_LIST, nextRef, placedPads } from '../lib/library';
+import { getDef, LIBRARY_LIST, nextRef, placedPads, resolvePin } from '../lib/library';
 import { catName, partDefaultValue, partDesc, partName, partPinHelp } from '../lib/library.i18n';
 import type { DrcIssue } from '../lib/drc';
 import { bomItems, buildBom, buildGerberOnlyZip, buildZip } from '../lib/gerber';
@@ -10,6 +10,9 @@ import Icon, { type IconName } from './Icon';
 
 export type Tab = 'part' | 'add' | 'nets' | 'check' | 'order';
 const TABS: Tab[] = ['part', 'add', 'nets', 'check', 'order'];
+const CIRCUIT_FIX_CODES = new Set(['badPin', 'short', 'singlePin', 'unused', 'ledNoR', 'unknownType']);
+const LAYOUT_FIX_CODES = new Set(['overlap', 'offboard', 'holePart', 'unrouted', 'clearance', 'noTracks']);
+const BOARD_PRESETS: [number, number][] = [[50, 40], [70, 50], [100, 100]];
 
 async function download(blob: Blob, name: string) {
   try { await saveFile(blob, name); } catch (e) { useStore.getState().notify(tt('toast.saveFail', { msg: (e as Error).message })); }
@@ -20,7 +23,23 @@ const Html = ({ html, className }: { html: string; className?: string }) => <div
 
 const TAB_ICON: Record<Tab, IconName> = { part: 'part', add: 'add', nets: 'nets', check: 'shield', order: 'order' };
 
-export default function SidePanel({ tab, setTab, issues, errorCount = 0 }: { tab: Tab; setTab: (t: Tab) => void; issues: DrcIssue[]; errorCount?: number }) {
+export default function SidePanel({
+  tab,
+  setTab,
+  issues,
+  errorCount = 0,
+  onAskAiFix,
+  onAutoFixLayout,
+  onExportImage,
+}: {
+  tab: Tab;
+  setTab: (t: Tab) => void;
+  issues: DrcIssue[];
+  errorCount?: number;
+  onAskAiFix?: (msgs: string[]) => void;
+  onAutoFixLayout?: () => void;
+  onExportImage?: (fmt: 'png' | 'svg') => void;
+}) {
   const board = useStore((s) => s.project.board);
   const t = useT();
   return (
@@ -45,10 +64,10 @@ export default function SidePanel({ tab, setTab, issues, errorCount = 0 }: { tab
         <div className="area-head"><div className="area-title"><Icon name={TAB_ICON[tab]} size={14} />{t(`tab.${tab}` as TKey)}</div></div>
         <div className="side-body">
           {tab === 'part' && <PartTab />}
-          {tab === 'add' && <AddTab onAdded={() => setTab('part')} />}
+          {tab === 'add' && <AddTab />}
           {tab === 'nets' && <NetsTab />}
-          {tab === 'check' && <CheckTab issues={issues} />}
-          {tab === 'order' && <OrderTab key={`${board.width}x${board.height}`} issues={issues} />}
+          {tab === 'check' && <CheckTab issues={issues} onAskAiFix={onAskAiFix} onAutoFixLayout={onAutoFixLayout} />}
+          {tab === 'order' && <OrderTab key={`${board.width}x${board.height}`} issues={issues} onExportImage={onExportImage} />}
         </div>
       </div>
     </aside>
@@ -59,7 +78,7 @@ function PartTab() {
   const project = useStore((s) => s.project);
   const selected = useStore((s) => s.selected);
   const stage = useStore((s) => s.stage);
-  const { select, updatePart, rotatePart, rotateSchPart, deletePart } = useStore.getState();
+  const { select, updatePart, rotatePart, rotateSchPart, duplicatePart, deletePart } = useStore.getState();
   const t = useT();
   const part = project.parts.find((p) => p.ref === selected);
   const [valEdit, setValEdit] = useState<{ ref: string; orig: string; draft: string } | null>(null);
@@ -112,12 +131,15 @@ function PartTab() {
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) (e.target as HTMLInputElement).blur(); }}
         />
       </label>
-      <div className="row">
+      <div className="row wrap-row">
         <button
           onClick={() => (stage === 'sch' ? rotateSchPart(part.ref) : rotatePart(part.ref))}
           data-tip={t('tip.rotate')}
         >
           <Icon name="rotate" size={14} />{t('part.rotate', { deg: rotDeg })}
+        </button>
+        <button onClick={() => duplicatePart(part.ref)} data-tip={t('tip.duplicate')}>
+          <Icon name="copy" size={14} />{t('part.duplicate')}
         </button>
         <button className="danger" onClick={() => deletePart(part.ref)} data-tip={t('tip.delete')}>{t('part.delete')}</button>
       </div>
@@ -150,8 +172,8 @@ function PartTab() {
   );
 }
 
-function AddTab({ onAdded }: { onAdded: () => void }) {
-  const addPart = useStore((s) => s.addPart);
+function AddTab() {
+  const { addPart, notify } = useStore.getState();
   const lang = useLang((s) => s.lang);
   const t = useT();
   const [q, setQ] = useState('');
@@ -180,8 +202,9 @@ function AddTab({ onAdded }: { onAdded: () => void }) {
                 data-tip={partDesc(d)}
                 onClick={() => {
                   const parts = useStore.getState().project.parts;
-                  addPart({ ref: nextRef(parts, d.prefix), type: d.type, value: partDefaultValue(d), x: 0, y: 0, rot: 0 });
-                  onAdded();
+                  const ref = nextRef(parts, d.prefix);
+                  addPart({ ref, type: d.type, value: partDefaultValue(d), x: 0, y: 0, rot: 0 });
+                  notify(t('toast.added', { ref }));
                 }}
               >
                 <b>{partName(d)}</b>
@@ -197,11 +220,25 @@ function AddTab({ onAdded }: { onAdded: () => void }) {
 
 function NetsTab() {
   const project = useStore((s) => s.project);
-  const commit = useStore((s) => s.commit);
+  const highlightNet = useStore((s) => s.highlightNet);
+  const { commit, setHighlightNet } = useStore.getState();
   const t = useT();
   const [newPins, setNewPins] = useState('');
   const [newName, setNewName] = useState('');
   const setNets = (nets: typeof project.nets) => commit({ ...project, nets: nets.filter((n) => n.pins.length > 0), tracks: [], vias: [] });
+
+  const allPins = useMemo(() => {
+    const out: string[] = [];
+    for (const part of project.parts) {
+      const seen = new Set<string>();
+      for (const pad of placedPads(part)) {
+        if (seen.has(pad.pin)) continue;
+        seen.add(pad.pin);
+        out.push(`${part.ref}.${pad.pin}`);
+      }
+    }
+    return out;
+  }, [project.parts]);
 
   const addNet = (e: React.FormEvent) => {
     e.preventDefault();
@@ -215,10 +252,18 @@ function NetsTab() {
 
   return (
     <>
+      <datalist id="ezboard-pins">
+        {allPins.map((p) => <option key={p} value={p} />)}
+      </datalist>
       <Html className="tip" html={t('nets.tip')} />
       {project.nets.length === 0 && <div className="empty">{t('nets.empty')}</div>}
       {project.nets.map((n, i) => (
-        <div key={n.name + i} className="net">
+        <div
+          key={n.name + i}
+          className={`net ${highlightNet === n.name ? 'active' : ''}`}
+          onPointerEnter={() => setHighlightNet(n.name)}
+          onPointerLeave={() => setHighlightNet(null)}
+        >
           <div className="net-head">
             <span className="net-tag">{n.name}</span>
             <button className="ghost small" data-tip={t('nets.delete')} aria-label={t('nets.delete')} onClick={() => setNets(project.nets.filter((_, j) => j !== i))}>
@@ -226,19 +271,23 @@ function NetsTab() {
             </button>
           </div>
           <div className="pin-chips">
-            {n.pins.map((p, k) => (
-              <span key={p + k} className="pin-chip">
-                {p}
-                <button
-                  aria-label={`${p} ${t('part.delete')}`}
-                  onClick={() => setNets(project.nets.map((x, j) => (j === i ? { ...x, pins: x.pins.filter((_, kk) => kk !== k) } : x)))}
-                >
-                  <Icon name="close" size={11} />
-                </button>
-              </span>
-            ))}
+            {n.pins.map((p, k) => {
+              const bad = resolvePin(project.parts, p).length === 0;
+              return (
+                <span key={p + k} className={`pin-chip ${bad ? 'bad' : ''}`} title={bad ? p : undefined}>
+                  {p}
+                  <button
+                    aria-label={`${p} ${t('part.delete')}`}
+                    onClick={() => setNets(project.nets.map((x, j) => (j === i ? { ...x, pins: x.pins.filter((_, kk) => kk !== k) } : x)))}
+                  >
+                    <Icon name="close" size={11} />
+                  </button>
+                </span>
+              );
+            })}
             <input
               className="pin-add"
+              list="ezboard-pins"
               placeholder={t('nets.addPin')}
               aria-label={t('nets.addPin')}
               onKeyDown={(e) => {
@@ -256,19 +305,30 @@ function NetsTab() {
       <div className="section-label">{t('nets.new')}</div>
       <form className="new-net" onSubmit={addNet}>
         <input placeholder={t('nets.name')} value={newName} onChange={(e) => setNewName(e.target.value)} aria-label={t('nets.name')} />
-        <input placeholder={t('nets.pins')} value={newPins} onChange={(e) => setNewPins(e.target.value)} aria-label={t('nets.pins')} />
+        <input list="ezboard-pins" placeholder={t('nets.pins')} value={newPins} onChange={(e) => setNewPins(e.target.value)} aria-label={t('nets.pins')} />
         <button type="submit" className="primary" disabled={!newPins.trim()}>{t('nets.add')}</button>
       </form>
     </>
   );
 }
 
-function CheckTab({ issues }: { issues: DrcIssue[] }) {
+function CheckTab({
+  issues,
+  onAskAiFix,
+  onAutoFixLayout,
+}: {
+  issues: DrcIssue[];
+  onAskAiFix?: (msgs: string[]) => void;
+  onAutoFixLayout?: () => void;
+}) {
   const hasParts = useStore((s) => s.project.parts.length > 0);
   const select = useStore((s) => s.select);
   const t = useT();
 
   if (!hasParts) return <div className="empty">{t('check.empty')}</div>;
+  const circuitErrs = issues.filter((i) => CIRCUIT_FIX_CODES.has(i.code));
+  const layoutErrs = issues.filter((i) => LAYOUT_FIX_CODES.has(i.code));
+
   return (
     <>
       <div className="section-label">{t('check.title')}</div>
@@ -283,12 +343,22 @@ function CheckTab({ issues }: { issues: DrcIssue[] }) {
           </div>
         )
       ))}
+      {circuitErrs.length > 0 && onAskAiFix && (
+        <button className="primary block" onClick={() => onAskAiFix(circuitErrs.map((i) => i.message))}>
+          <Icon name="sparkles" size={14} />{t('check.askAiFix')}
+        </button>
+      )}
+      {layoutErrs.length > 0 && onAutoFixLayout && (
+        <button className="block" onClick={onAutoFixLayout}>
+          <Icon name="route" size={14} />{t('check.autoFixLayout')}
+        </button>
+      )}
       {issues.some((i) => i.level === 'error') && <div className="tip">{t('check.fixTip')}</div>}
     </>
   );
 }
 
-function OrderTab({ issues }: { issues: DrcIssue[] }) {
+function OrderTab({ issues, onExportImage }: { issues: DrcIssue[]; onExportImage?: (fmt: 'png' | 'svg') => void }) {
   const project = useStore((s) => s.project);
   const setBoard = useStore((s) => s.setBoard);
   const notify = useStore((s) => s.notify);
@@ -302,6 +372,7 @@ function OrderTab({ issues }: { issues: DrcIssue[] }) {
   const nw = Math.min(200, Math.max(10, Math.round(Number(w) || 0)));
   const nh = Math.min(200, Math.max(10, Math.round(Number(h) || 0)));
   const validSize = Number.isFinite(Number(w)) && Number.isFinite(Number(h)) && Number(w) >= 10 && Number(h) >= 10 && Number(w) <= 200 && Number(h) <= 200;
+  const cheapOk = project.board.width <= 100 && project.board.height <= 100;
   const applySize = (e: React.FormEvent) => {
     e.preventDefault();
     setW(String(nw));
@@ -318,6 +389,19 @@ function OrderTab({ issues }: { issues: DrcIssue[] }) {
         <input type="number" min={10} max={200} value={h} onChange={(e) => setH(e.target.value)} aria-label="board height mm" />
         <button type="submit" disabled={!validSize || (nw === project.board.width && nh === project.board.height)} data-tip={t('tip.boardApply')}>{t('order.apply')}</button>
       </form>
+      <div className="presets">
+        {BOARD_PRESETS.map(([pw, ph]) => (
+          <button
+            key={`${pw}x${ph}`}
+            type="button"
+            className={`small num ${project.board.width === pw && project.board.height === ph ? 'engaged' : ''}`}
+            onClick={() => { setW(String(pw)); setH(String(ph)); setBoard(pw, ph); }}
+          >
+            {pw}×{ph}
+          </button>
+        ))}
+        <span className={`tier-badge ${cheapOk ? 'ok' : 'over'}`}>{cheapOk ? t('order.cheapOk') : t('order.cheapOver')}</span>
+      </div>
       <div className="tip">{t('order.sizeTip')}</div>
 
       <div className="section-label">{t('order.extras')}</div>
@@ -342,6 +426,20 @@ function OrderTab({ issues }: { issues: DrcIssue[] }) {
       <button className="block" disabled={!project.parts.length} data-tip={t('tip.orderBom')} onClick={() => download(new Blob([buildBom(project)], { type: 'text/csv' }), `${fileBase(project.name)}_BOM.csv`)}>
         {t('order.bom')}
       </button>
+
+      {onExportImage && (
+        <>
+          <div className="section-label">{t('order.exportImg')}</div>
+          <div className="row">
+            <button type="button" style={{ flex: 1 }} disabled={!project.parts.length} onClick={() => onExportImage('png')}>
+              <Icon name="image" size={14} />{t('order.exportPng')}
+            </button>
+            <button type="button" style={{ flex: 1 }} disabled={!project.parts.length} onClick={() => onExportImage('svg')}>
+              <Icon name="image" size={14} />{t('order.exportSvg')}
+            </button>
+          </div>
+        </>
+      )}
 
       <div className="section-label">{t('order.how')}</div>
       <ol className="steps-guide">

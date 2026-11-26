@@ -3,14 +3,14 @@ import { t } from './i18n';
 import type { AiSettings, ChatMessage, Part, Project, SchPos } from './types';
 import { layoutSchematic } from './lib/schematic';
 import { symbolFor } from './lib/symbols';
-import { autoPlace } from './lib/geometry';
+import { autoPlace, findFreeSpot, GRID, snap } from './lib/geometry';
 import { autoRoute, type RouteResult } from './lib/router';
 import { PROVIDERS, type AiCircuit } from './lib/ai';
 import { buildFromCircuit } from './lib/build';
 import { forLocalStorage, loadKeys, saveKeys } from './lib/secureKeys';
 import { connectPins, disconnectPin, type PinId } from './lib/connect';
 import { hitsHole, mountingHoles } from './lib/features';
-import { partBox } from './lib/library';
+import { getDef, nextRef, partBox } from './lib/library';
 
 const emptyProject = (): Project => ({ name: t('app.newProject'), board: { width: 50, height: 40 }, parts: [], nets: [], tracks: [], vias: [], pour: true });
 
@@ -124,9 +124,12 @@ interface State {
   /** 새 프로젝트·열기·채팅 초기화 시 증가 — 진행 중 AI 응답 경합 차단 */
   sessionGen: number;
   selected: string | null;
+  highlightNet: string | null;
+  pendingPrompt: string | null;
   messages: ChatMessage[];
   settings: AiSettings;
   view: ViewMode;
+  realSide: 'top' | 'bottom';
   stage: Stage;
   appearance: Appearance;
   fitTick: number;
@@ -141,9 +144,14 @@ interface State {
   undo: () => void;
   redo: () => void;
   select: (ref: string | null) => void;
+  setHighlightNet: (net: string | null) => void;
+  requestAiPrompt: (text: string | null) => void;
   movePart: (ref: string, x: number, y: number, record: boolean) => void;
+  nudgePart: (ref: string, dxSteps: number, dySteps: number) => void;
+  nudgeSchPart: (ref: string, dx: number, dy: number) => void;
   updatePart: (ref: string, patch: Partial<Part>, record?: boolean) => void;
   rotatePart: (ref: string) => void;
+  duplicatePart: (ref: string) => void;
   deletePart: (ref: string) => void;
   addPart: (part: Part) => void;
   applyCircuit: (c: AiCircuit) => void;
@@ -160,6 +168,7 @@ interface State {
   clearChat: () => void;
   setSettings: (s: AiSettings) => void;
   setView: (v: ViewMode) => void;
+  toggleRealSide: () => void;
   setStage: (s: Stage) => void;
   setAppearance: (a: Appearance) => void;
   requestFit: () => void;
@@ -188,9 +197,12 @@ export const useStore = create<State>((set, get) => ({
   dirty: false,
   sessionGen: 0,
   selected: null,
+  highlightNet: null,
+  pendingPrompt: null,
   messages: loadChatStorage(),
   settings: loadSettings(),
   view: 'edit',
+  realSide: 'top',
   stage: 'sch',
   appearance: (() => { try { return localStorage.getItem('ezboard.appearance') === 'light' ? 'light' : 'dark'; } catch { return 'dark'; } })(),
   fitTick: 0,
@@ -214,12 +226,27 @@ export const useStore = create<State>((set, get) => ({
     return { project, future: s.future.slice(1), past: [...s.past, s.project], lastRoute: null, selected, dirty: true };
   }),
   select: (ref) => set({ selected: ref }),
+  setHighlightNet: (highlightNet) => set({ highlightNet }),
+  requestAiPrompt: (pendingPrompt) => set({ pendingPrompt }),
 
   movePart: (ref, x, y, record) => {
     const s = get();
     const parts = s.project.parts.map((p) => (p.ref === ref ? { ...p, x, y } : p));
     const next = dropTracksOf({ ...s.project, parts }, ref);
     if (record) s.commit(next); else set({ project: next, dirty: true });
+  },
+  nudgePart: (ref, dxSteps, dySteps) => {
+    const s = get();
+    const cur = s.project.parts.find((p) => p.ref === ref);
+    if (!cur) return;
+    s.movePart(ref, snap(cur.x + dxSteps * GRID), snap(cur.y + dySteps * GRID), true);
+  },
+  nudgeSchPart: (ref, dx, dy) => {
+    const s = get();
+    const cur = layoutSchematic(s.project.parts, s.project.nets, s.project.sch ?? {});
+    const old = cur[ref];
+    if (!old) return;
+    s.commit({ ...s.project, sch: { ...cur, [ref]: { ...old, x: old.x + dx, y: old.y + dy } } });
   },
   updatePart: (ref, patch, record = true) => {
     const s = get();
@@ -230,6 +257,25 @@ export const useStore = create<State>((set, get) => ({
     const s = get();
     const parts = s.project.parts.map((p) => (p.ref === ref ? { ...p, rot: (p.rot + 90) % 360 } : p));
     s.commit(dropTracksOf({ ...s.project, parts }, ref));
+  },
+  duplicatePart: (ref) => {
+    const s = get();
+    const src = s.project.parts.find((p) => p.ref === ref);
+    if (!src) return;
+    const def = getDef(src.type);
+    const prefix = def?.prefix ?? (ref.replace(/\d+$/, '') || 'U');
+    const newRef = nextRef(s.project.parts, prefix);
+    const spot = findFreeSpot(s.project, src, { x: src.x + GRID * 3, y: src.y + GRID * 2 });
+    const clone: Part = { ...src, ref: newRef, x: spot.x, y: spot.y };
+    const parts = [...s.project.parts, clone];
+    const baseSch = layoutSchematic(s.project.parts, s.project.nets, s.project.sch ?? {});
+    const srcSch = baseSch[src.ref];
+    const sch = srcSch
+      ? { ...baseSch, [newRef]: { x: srcSch.x + 6, y: srcSch.y + 4, rot: srcSch.rot } }
+      : layoutSchematic(parts, s.project.nets, baseSch);
+    const next: Project = { ...s.project, parts, sch };
+    set((cur) => ({ project: next, past: [...cur.past.slice(-50), cur.project], future: [], selected: newRef, dirty: true }));
+    get().notify(t('toast.duplicated', { ref: newRef }));
   },
   deletePart: (ref) => {
     const s = get();
@@ -247,10 +293,11 @@ export const useStore = create<State>((set, get) => ({
   },
   addPart: (part) => {
     const s = get();
-    const parts = [...s.project.parts, part];
-    const p = { ...s.project, parts, sch: layoutSchematic(parts, s.project.nets, s.project.sch ?? {}) };
-    const next = autoPlace(p, new Set(s.project.parts.map((x) => x.ref)));
-    set((cur) => ({ project: next, past: [...cur.past.slice(-50), cur.project], future: [], selected: part.ref, dirty: true }));
+    const spot = part.x === 0 && part.y === 0 ? findFreeSpot(s.project, part) : { x: part.x, y: part.y };
+    const placed: Part = { ...part, x: spot.x, y: spot.y };
+    const parts = [...s.project.parts, placed];
+    const next: Project = { ...s.project, parts, sch: layoutSchematic(parts, s.project.nets, s.project.sch ?? {}) };
+    set((cur) => ({ project: next, past: [...cur.past.slice(-50), cur.project], future: [], selected: placed.ref, dirty: true }));
   },
 
   applyCircuit: (c) => {
@@ -333,6 +380,7 @@ export const useStore = create<State>((set, get) => ({
     set({ settings });
   },
   setView: (view) => set({ view }),
+  toggleRealSide: () => set((s) => ({ realSide: s.realSide === 'top' ? 'bottom' : 'top' })),
   setStage: (stage) => set({ stage }),
   setAppearance: (appearance) => { try { localStorage.setItem('ezboard.appearance', appearance); } catch { /* 무시 */ } set({ appearance }); },
   requestFit: () => set((s) => ({ fitTick: s.fitTick + 1 })),
