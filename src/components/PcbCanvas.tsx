@@ -9,8 +9,10 @@ import { netConnections, snap } from '../lib/geometry';
 import { textStrokes } from '../lib/font';
 import { refLabelPosForPart } from '../lib/gerber';
 import { VIA_D, VIA_DRILL } from '../lib/router';
+import { clearanceViolations, type DrcIssue } from '../lib/drc';
 import PinMenu from './PinMenu';
 import { MountingHoles, PourLayer } from './PourLayer';
+import CanvasHud from './CanvasHud';
 
 type Drag =
   | { kind: 'part'; ref: string; dx: number; dy: number; x: number; y: number }
@@ -22,23 +24,26 @@ const PAD_SNAP = 0.8;
 /** 이만큼(화면 px) 안 움직이고 떼면 탭으로 본다 */
 const TAP_PX = 8;
 
-export default function PcbCanvas() {
+export default function PcbCanvas({ issues = [] }: { issues?: DrcIssue[] }) {
   const project = useStore((s) => s.project);
   const selected = useStore((s) => s.selected);
+  const hoverNet = useStore((s) => s.highlightNet);
   const view = useStore((s) => s.view);
+  const realSide = useStore((s) => s.realSide);
   const show = useStore((s) => s.showLayer);
   const lastRoute = useStore((s) => s.lastRoute);
-  const { select, movePart, rotatePart, deletePart, undo, redo, connectSchPins, disconnectSchPin } = useStore.getState();
+  const { select, setHighlightNet, movePart, nudgePart, rotatePart, duplicatePart, deletePart, toggleRealSide, undo, redo, connectSchPins, disconnectSchPin } = useStore.getState();
 
   const svgRef = useRef<SVGSVGElement>(null);
   const tr = useT();
   const [vb, setVb] = useState({ x: -10, y: -10, w: 80, h: 60 });
+  const [baseW, setBaseW] = useState(80);
   const [drag, setDrag] = useState<Drag | null>(null);
-  const [hoverNet, setHoverNet] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; pad: PlacedPad } | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
   const { board } = project;
   const real = view === 'real';
+  const realBack = real && realSide === 'bottom';
 
   // 보드 크기가 바뀌면 화면에 맞추기 (숨겨진 0 크기 상태에서는 건너뜀)
   const fit = useCallback(() => {
@@ -50,11 +55,22 @@ export default function PcbCanvas() {
     const bw = board.width + pad * 2, bh = board.height + pad * 2;
     const aspect = r.width / r.height;
     const w = Math.max(bw, bh * aspect), h = w / aspect;
+    setBaseW(w);
     setVb({ x: board.width / 2 - w / 2, y: board.height / 2 - h / 2, w, h });
   }, [board.width, board.height]);
   const fitTick = useStore((s) => s.fitTick);
   useEffect(fit, [fit, fitTick]);
   useRefitOnShow(svgRef, fit);
+
+  const zoomBy = useCallback((factor: number) => {
+    setVb((v) => {
+      const cx = v.x + v.w / 2, cy = v.y + v.h / 2;
+      const w = Math.min(500, Math.max(8, v.w * factor));
+      const f = w / v.w;
+      const h = v.h * f;
+      return { x: cx - w / 2, y: cy - h / 2, w, h };
+    });
+  }, []);
 
   // 키보드 단축키 (모달이 열려 있거나 캔버스가 숨겨져 있으면 무시, Ctrl/Cmd+R 등 브라우저 단축키 보존)
   useEffect(() => {
@@ -66,16 +82,27 @@ export default function PcbCanvas() {
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd') {
+        if (selected) { e.preventDefault(); duplicatePart(selected); }
+        return;
+      }
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === 'Escape') { setDrag(null); select(null); return; }
       if (e.key === 'f' || e.key === 'F' || e.key === '0') { fit(); return; }
+      if (e.key === '=' || e.key === '+') { zoomBy(0.8); return; }
+      if (e.key === '-') { zoomBy(1.25); return; }
       if (!selected) return;
+      const step = e.shiftKey ? 4 : 1;
+      if (e.key === 'ArrowLeft') { e.preventDefault(); nudgePart(selected, realBack ? step : -step, 0); return; }
+      if (e.key === 'ArrowRight') { e.preventDefault(); nudgePart(selected, realBack ? -step : step, 0); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); nudgePart(selected, 0, -step); return; }
+      if (e.key === 'ArrowDown') { e.preventDefault(); nudgePart(selected, 0, step); return; }
       if (e.key === 'r' || e.key === 'R') rotatePart(selected);
       if (e.key === 'Delete' || e.key === 'Backspace') deletePart(selected);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selected, rotatePart, deletePart, select, undo, redo, fit]);
+  }, [selected, realBack, rotatePart, duplicatePart, deletePart, nudgePart, select, undo, redo, fit, zoomBy]);
 
   const toSvg = (e: { clientX: number; clientY: number }) => {
     const el = svgRef.current;
@@ -85,6 +112,10 @@ export default function PcbCanvas() {
     pt.x = e.clientX; pt.y = e.clientY;
     const p = pt.matrixTransform(ctm.inverse());
     return { x: p.x, y: p.y };
+  };
+  const toBoard = (e: { clientX: number; clientY: number }) => {
+    const p = toSvg(e);
+    return realBack ? { x: board.width - p.x, y: p.y } : p;
   };
   const pinch = usePinchZoom(toSvg, setVb, () => setDrag(null));
 
@@ -108,7 +139,7 @@ export default function PcbCanvas() {
   const onPointerMove = (e: React.PointerEvent) => {
     if (!drag) return;
     if (drag.kind === 'wire') {
-      const p = toSvg(e);
+      const p = toBoard(e);
       setDrag({ ...drag, x: p.x, y: p.y });
       return;
     }
@@ -117,7 +148,7 @@ export default function PcbCanvas() {
       const scale = Math.max(vb.w / Math.max(1, r.width), vb.h / Math.max(1, r.height));
       setVb((v) => ({ ...v, x: drag.vx - (e.clientX - drag.sx) * scale, y: drag.vy - (e.clientY - drag.sy) * scale }));
     } else {
-      const p = toSvg(e);
+      const p = toBoard(e);
       const nx = snap(p.x - drag.dx), ny = snap(p.y - drag.dy);
       if (nx !== drag.x || ny !== drag.y) setDrag({ ...drag, x: nx, y: ny });
     }
@@ -159,6 +190,19 @@ export default function PcbCanvas() {
     return m;
   }, [project.nets, displayParts]);
 
+  // DRC 시각 강조: 겹침·보드 밖·구멍 충돌 부품 + 구리 간격 위반 좌표
+  const errorRefs = useMemo(() => {
+    const set = new Set<string>();
+    for (const it of issues) {
+      if (it.level === 'error' && it.refs) for (const r of it.refs) set.add(r);
+    }
+    return set;
+  }, [issues]);
+  const clearDots = useMemo(() => {
+    if (real || !issues.some((i) => i.code === 'clearance')) return [];
+    return clearanceViolations(project).slice(0, 30);
+  }, [real, issues, project]);
+
   // 부품 실크스크린·참조명·값 위치 사전 계산 (팬·줌·호버마다 O(N^2) 재계산 방지)
   const partRender = useMemo(() => displayParts.map((part) => {
     const def = getDef(part.type);
@@ -193,11 +237,14 @@ export default function PcbCanvas() {
   }, [project.nets, project.tracks, displayParts, lastRoute]);
 
   const colors = real
-    ? { board: '#1d6b3c', edge: '#e8d9a8', top: '#2c8a50', bottom: '#226a40', pad: '#d9b44a', silk: '#f5f5f0', hole: '#111' }
+    ? { board: '#1d6b3c', edge: '#e8d9a8', top: '#2c8a50', bottom: '#2c8a50', pad: '#d9b44a', silk: '#f5f5f0', hole: '#111' }
     : { board: '#0d2b22', edge: '#e5c07b', top: '#d9483b', bottom: '#3b7dd9', pad: '#c8a24a', silk: '#e8e8e8', hole: '#0a0a0a' };
 
   const minor = 1.27;
   const gridStep = vb.w > 150 ? minor * 4 : minor * 2;
+  const selectedPart = selected ? project.parts.find((p) => p.ref === selected) : undefined;
+  const zoomPct = Math.round((baseW / Math.max(1, vb.w)) * 100);
+  const trackLayers: ('top' | 'bottom')[] = real ? [realBack ? 'bottom' : 'top'] : ['bottom', 'top'];
 
   return (
     <>
@@ -229,33 +276,33 @@ export default function PcbCanvas() {
         </filter>
       </defs>
 
+      <g transform={realBack ? `translate(${board.width} 0) scale(-1 1)` : undefined}>
       {/* 보드 */}
       <rect x={0} y={0} width={board.width} height={board.height} rx={real ? 1 : 0} fill={colors.board} stroke={colors.edge} strokeWidth={0.2} filter={real ? 'url(#shadow)' : undefined} />
       {!real && <rect x={0} y={0} width={board.width} height={board.height} fill="url(#grid)" pointerEvents="none" />}
 
-      {/* GND 구리 채우기 (실물 보기의 아랫면은 opacity=0이므로 마운트 생략) */}
-      {(['bottom', 'top'] as const).map((layer) => {
+      {/* GND 구리 채우기 (실물 보기에서는 보고 있는 면만 렌더링) */}
+      {trackLayers.map((layer) => {
         if (!show[layer]) return null;
-        const opacity = real ? (layer === 'top' ? 0.6 : 0) : layer === 'top' ? 0.26 : 0.22;
-        if (opacity <= 0) return null;
+        const opacity = real ? 0.6 : layer === 'top' ? 0.26 : 0.22;
         return <PourLayer key={`pour-${layer}`} project={project} side={layer} color={real ? '#2f9a5a' : colors[layer]} opacity={opacity} />;
       })}
 
       {/* 배선 */}
-      {(['bottom', 'top'] as const).map((layer) =>
+      {trackLayers.map((layer) =>
         show[layer] && project.tracks.filter((t) => t.layer === layer).map((t, i) => (
           <polyline
             key={`${layer}${i}`}
             points={t.points.map((p) => p.join(',')).join(' ')}
             fill="none"
             stroke={colors[layer]}
-            strokeOpacity={real ? 1 : hoverNet && hoverNet !== t.net ? 0.25 : layer === 'bottom' ? 0.75 : 0.9}
+            strokeOpacity={real ? (hoverNet && hoverNet !== t.net ? 0.45 : 1) : hoverNet && hoverNet !== t.net ? 0.25 : layer === 'bottom' ? 0.75 : 0.9}
             strokeWidth={t.width}
             strokeLinecap="round"
             strokeLinejoin="round"
             pointerEvents="stroke"
-            onPointerEnter={() => setHoverNet(t.net)}
-            onPointerLeave={() => setHoverNet(null)}
+            onPointerEnter={() => setHighlightNet(t.net)}
+            onPointerLeave={() => setHighlightNet(null)}
           >
             <title>{tr('canvas.trackTitle', { net: t.net, layer: tr(layer === 'top' ? 'tb.top' : 'tb.bottom') })}</title>
           </polyline>
@@ -270,9 +317,10 @@ export default function PcbCanvas() {
 
       <MountingHoles project={project} hole={colors.hole} real={real} label={tr('canvas.hole')} />
 
-      {/* 부품 */}
+      {/* 부품 (실물 뒷면에서는 앞면 실크스크린을 감춤) */}
       {partRender.map(({ part, def, box, refStrokes, silk, valY }) => {
         const isSel = part.ref === selected;
+        const hasErr = !real && errorRefs.has(part.ref);
         return (
           <g
             key={part.ref}
@@ -281,20 +329,23 @@ export default function PcbCanvas() {
               e.stopPropagation();
               if (e.button !== 0) return;
               e.currentTarget.setPointerCapture?.(e.pointerId);
-              const p = toSvg(e);
+              const p = toBoard(e);
               select(part.ref);
               setDrag({ kind: 'part', ref: part.ref, dx: p.x - part.x, dy: p.y - part.y, x: part.x, y: part.y });
             }}
             onDoubleClick={(e) => { e.stopPropagation(); rotatePart(part.ref); }}
           >
             <rect x={box.x1} y={box.y1} width={box.x2 - box.x1} height={box.y2 - box.y1}
-              fill={isSel ? 'rgba(255,158,41,0.10)' : 'transparent'} stroke={isSel ? '#ff9e29' : 'none'} strokeWidth={0.2} strokeDasharray={isSel ? '0.6 0.4' : undefined} />
-            {show.silk && silk.map((s, i) => (
+              fill={isSel ? 'rgba(255,158,41,0.10)' : hasErr ? 'rgba(230,115,127,0.14)' : 'transparent'}
+              stroke={isSel ? '#ff9e29' : hasErr ? '#e6737f' : 'none'}
+              strokeWidth={hasErr ? 0.28 : 0.2}
+              strokeDasharray={isSel || hasErr ? '0.6 0.4' : undefined} />
+            {show.silk && !realBack && silk.map((s, i) => (
               s.kind === 'line'
                 ? <line key={i} x1={s.x1} y1={s.y1} x2={s.x2} y2={s.y2} stroke={colors.silk} strokeWidth={0.15} strokeLinecap="round" />
                 : <circle key={i} cx={s.cx} cy={s.cy} r={s.r} fill="none" stroke={colors.silk} strokeWidth={0.15} />
             ))}
-            {show.silk && refStrokes.map((pts, i) => (
+            {show.silk && !realBack && refStrokes.map((pts, i) => (
               <polyline key={`t${i}`} points={pts} fill="none" stroke={colors.silk} strokeWidth={0.15} strokeLinecap="round" strokeLinejoin="round" />
             ))}
             {!real && part.value && (
@@ -325,8 +376,8 @@ export default function PcbCanvas() {
               setMenu(null);
               setDrag({ kind: 'wire', from: p, x: p.ax, y: p.ay, sx: e.clientX, sy: e.clientY });
             }}
-            onPointerEnter={() => net && setHoverNet(net)}
-            onPointerLeave={() => setHoverNet(null)}
+            onPointerEnter={() => net && setHighlightNet(net)}
+            onPointerLeave={() => setHighlightNet(null)}
           >
             <title>{tr('canvas.pinTitle', { pin: `${p.ref}.${p.pin}`, net: net ? ` · ${net}` : '' })}</title>
             {p.shape === 'circle' ? (
@@ -356,11 +407,31 @@ export default function PcbCanvas() {
         <line key={`rn${i}`} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke="#facc15" strokeWidth={0.15} strokeDasharray="0.5 0.4" opacity={0.9} pointerEvents="none" />
       ))}
 
+      {/* 구리 간격 위반 시각 마커 */}
+      {clearDots.map((v, i) => (
+        <g key={`cv${i}`} pointerEvents="none">
+          <circle cx={v.x} cy={v.y} r={1.1} fill="rgba(230,115,127,0.22)" stroke="#e6737f" strokeWidth={0.22} />
+        </g>
+      ))}
+      </g>
+
       {/* 치수 표시 */}
       <text x={board.width / 2} y={-1.6} className="dim-label" textAnchor="middle" fontSize={1.6}>{board.width} mm</text>
       <text x={-1.6} y={board.height / 2} className="dim-label" textAnchor="middle" fontSize={1.6} transform={`rotate(-90 ${-1.6} ${board.height / 2})`}>{board.height} mm</text>
       {hoverNet && <text x={board.width} y={board.height + 3} className="dim-label" textAnchor="end" fontSize={1.6}>{tr('canvas.net', { net: hoverNet })}</text>}
     </svg>
+    <CanvasHud
+      zoomPct={zoomPct}
+      onZoomIn={() => zoomBy(0.8)}
+      onZoomOut={() => zoomBy(1.25)}
+      onFit={fit}
+      selectedPart={selectedPart}
+      onRotate={selectedPart ? () => rotatePart(selectedPart.ref) : undefined}
+      onDuplicate={selectedPart ? () => duplicatePart(selectedPart.ref) : undefined}
+      onDelete={selectedPart ? () => deletePart(selectedPart.ref) : undefined}
+      realBack={realBack}
+      onFlipBack={toggleRealSide}
+    />
     {menu && (
       <PinMenu
         x={menu.x} y={menu.y} pin={`${menu.pad.ref}.${menu.pad.pin}`} net={pinNet.get(`${menu.pad.ref}.${menu.pad.num}`)}

@@ -39,6 +39,17 @@ const P: Record<string, string> = {
   help: 'M12 3a9 9 0 100 18 9 9 0 000-18zM9.5 9.3a2.6 2.6 0 015 .9c0 1.7-2.5 2.3-2.5 3.8M12 17h.01',
   issue: 'M12 3a9 9 0 100 18 9 9 0 000-18zM12 8v4M12 16h.01',
   download: 'M12 4v11M7 10l5 5 5-5M5 20h14',
+  copy: 'M9 9h10v10H9zM5 15H4a1 1 0 01-1-1V4a1 1 0 011-1h10a1 1 0 011 1v1',
+  flip: 'M7 8l-4 4 4 4M17 8l4 4-4 4M12 4v16',
+  image: 'M4 5h16v14H4zM8.5 10a1.5 1.5 0 100-3 1.5 1.5 0 000 3zM4 16l5-5 4 4 3-3 4 4',
+  zoomIn: 'M11 5a6 6 0 100 12 6 6 0 000-12zM21 21l-4.3-4.3M11 8v6M8 11h6',
+  zoomOut: 'M11 5a6 6 0 100 12 6 6 0 000-12zM21 21l-4.3-4.3M8 11h6',
+  panelLeft: 'M3 4h18v16H3zM9 4v16',
+  panelRight: 'M3 4h18v16H3zM15 4v16',
+  retry: 'M4 12a8 8 0 0113.7-5.6L20 9M20 4v5h-5M20 12a8 8 0 01-13.7 5.6L4 15M4 20v-5h5',
+  keyboard: 'M3 6h18v12H3zM7 10h.01M10 10h.01M13 10h.01M16 10h.01M7 14h10',
+  sparkles: 'M12 3l1.8 4.8L18.5 9.5l-4.7 1.7L12 16l-1.8-4.8L5.5 9.5l4.7-1.7zM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z',
+  examples: 'M4 5h7v6H4zM13 5h7v6h-7zM4 13h7v6H4zM13 13h7v6h-7z',
 };
 
 export type IconName = keyof typeof P;

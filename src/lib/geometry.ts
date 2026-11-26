@@ -125,3 +125,40 @@ export function suggestBoardSize(parts: Part[]): { width: number; height: number
     height: Math.max(side, Math.ceil((maxH + 10) / 5) * 5),
   };
 }
+
+/** 기존 부품·나사 구멍과 겹치지 않는 가장 가까운 격자 위치 찾기 (부품 복제·추가용) */
+export function findFreeSpot(project: Project, part: Part, preferred?: { x: number; y: number }): { x: number; y: number } {
+  const { board } = project;
+  const margin = 2.5;
+  const pad = 1.0;
+  const holes = mountingHoles(project);
+  const existingBoxes = project.parts.map((p) => partBox(p));
+  const sample = partBox({ ...part, x: 0, y: 0 });
+  const hw = (sample.x2 - sample.x1) / 2;
+  const hh = (sample.y2 - sample.y1) / 2;
+  const cx = preferred?.x ?? board.width / 2;
+  const cy = preferred?.y ?? board.height / 2;
+
+  const overlaps = (b: { x1: number; y1: number; x2: number; y2: number }) =>
+    hitsHole(holes, b, 0.5) || existingBoxes.some((a) => !(a.x2 + pad < b.x1 || b.x2 + pad < a.x1 || a.y2 + pad < b.y1 || b.y2 + pad < a.y1));
+
+  const xMin = Math.max(margin + hw, GRID);
+  const xMax = board.width - margin - hw;
+  const yMin = Math.max(margin + hh, GRID);
+  const yMax = board.height - margin - hh;
+
+  let best: { x: number; y: number } | null = null;
+  let bestDist = Infinity;
+  for (let y = yMin; y <= yMax; y += GRID) {
+    const sy = snap(y);
+    for (let x = xMin; x <= xMax; x += GRID) {
+      const sx = snap(x);
+      const b = { x1: sx - hw, y1: sy - hh, x2: sx + hw, y2: sy + hh };
+      if (overlaps(b)) continue;
+      const d = Math.hypot(sx - cx, sy - cy);
+      if (d < bestDist) { bestDist = d; best = { x: sx, y: sy }; }
+    }
+  }
+  return best ?? { x: snap(Math.min(board.width - margin, Math.max(margin, cx + GRID * 3))), y: snap(Math.min(board.height - margin, Math.max(margin, cy + GRID * 3))) };
+}
+
