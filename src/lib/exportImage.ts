@@ -1,5 +1,7 @@
-// 회로도 / PCB 캔버스 SVG → SVG 파일 또는 고해상도 PNG 파일로 내보내기
+// 회로도 / PCB 캔버스 SVG → SVG 파일 또는 고해상도 PNG 파일 + 1:1 실寸 인쇄/SVG 내보내기
+import type { Project } from '../types';
 import { saveFile } from './platform';
+import { renderTrueScaleSvg } from './renderSvg';
 
 const EXPORT_CSS = `
 text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
@@ -71,4 +73,22 @@ export async function exportCanvasPng(svg: SVGSVGElement, fileName: string, bg: 
   } finally {
     URL.revokeObjectURL(url);
   }
+}
+
+/** 1:1 실寸(mm) 검증용 SVG 파일 저장 */
+export async function exportTrueScaleSvg(project: Project, fileName: string): Promise<void> {
+  const svg = renderTrueScaleSvg(project);
+  await saveFile(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }), fileName);
+}
+
+/** 1:1 실寸(mm) 브라우저 인쇄 창 열기 (인쇄 배율 100% 권장) */
+export function printTrueScale(project: Project): boolean {
+  const svg = renderTrueScaleSvg(project);
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${project.name} (1:1)</title><style>@page{margin:8mm;}body{margin:0;background:#fff;display:flex;justify-content:center;align-items:flex-start;}svg{display:block;}</style></head><body>${svg}<script>window.onload=function(){window.focus();window.print();};</script></body></html>`;
+  const win = window.open('', '_blank', 'width=900,height=700');
+  if (!win) return false;
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+  return true;
 }

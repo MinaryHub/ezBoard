@@ -49,7 +49,7 @@ export function buildFromCircuit(base: Project, c: AiCircuit): { project: Projec
 }
 
 /** AI에게 돌려보내 고치게 할 회로 문제 (배치·배선 문제는 앱이 처리하므로 뺀다) */
-const FIXABLE = new Set(['badPin', 'short', 'singlePin', 'unused', 'ledNoR', 'unknownType']);
+const FIXABLE = new Set(['badPin', 'short', 'singlePin', 'unused', 'ledNoR', 'unknownType', 'voltMix']);
 
 export function circuitIssues(project: Project, problems: string[]): string[] {
   const drc = runDrc(project).filter((i) => FIXABLE.has(i.code)).map((i) => i.message);

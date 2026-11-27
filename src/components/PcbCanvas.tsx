@@ -7,7 +7,8 @@ import { useRefitOnShow } from './useRefitOnShow';
 import { getDef, partBox, placedPads, rotatePoint, resolvePin, type PlacedPad } from '../lib/library';
 import { netConnections, snap } from '../lib/geometry';
 import { textStrokes } from '../lib/font';
-import { refLabelPosForPart } from '../lib/gerber';
+import { partPinSilkLabels, refLabelPosForPart } from '../lib/gerber';
+import { keepoutRects } from '../lib/features';
 import { VIA_D, VIA_DRILL } from '../lib/router';
 import { clearanceViolations, type DrcIssue } from '../lib/drc';
 import PinMenu from './PinMenu';
@@ -203,12 +204,20 @@ export default function PcbCanvas({ issues = [] }: { issues?: DrcIssue[] }) {
     return clearanceViolations(project).slice(0, 30);
   }, [real, issues, project]);
 
-  // 부품 실크스크린·참조명·값 위치 사전 계산 (팬·줌·호버마다 O(N^2) 재계산 방지)
+  const keepouts = useMemo(
+    () => keepoutRects({ ...project, parts: displayParts }),
+    [project, displayParts],
+  );
+
+  // 부품 실크스크린·참조명·커넥터 핀 라벨·값 위치 사전 계산 (팬·줌·호버마다 O(N^2) 재계산 방지)
   const partRender = useMemo(() => displayParts.map((part) => {
     const def = getDef(part.type);
     const box = partBox(part);
     const lp = refLabelPosForPart(part, board);
     const refStrokes = textStrokes(part.ref, lp.x, lp.y, lp.h).map((st) => st.map((q) => q.join(',')).join(' '));
+    const pinLabelStrokes = partPinSilkLabels(part, board).flatMap((pl) =>
+      textStrokes(pl.text, pl.x, pl.y, pl.h).map((st) => st.map((q) => q.join(',')).join(' ')),
+    );
     const silk = (def?.footprint.silk ?? []).map((s) => {
       if (s.kind === 'line') {
         const [x1, y1] = rotatePoint(s.x1, s.y1, part.rot);
@@ -221,7 +230,7 @@ export default function PcbCanvas({ issues = [] }: { issues?: DrcIssue[] }) {
     // 값(value)은 패드·드릴 구멍과 겹치지 않도록 부품 바깥쪽(참조명 반대편)에 배치
     const refAbove = lp.y < box.y1;
     const valY = refAbove ? box.y2 + 0.95 : box.y1 - 0.85;
-    return { part, def, box, refStrokes, silk, valY };
+    return { part, def, box, refStrokes, pinLabelStrokes, silk, valY };
   }), [displayParts, board]);
 
   // 래츠네스트: 배선이 없는 넷 + 자동배선 실패 연결
@@ -317,8 +326,38 @@ export default function PcbCanvas({ issues = [] }: { issues?: DrcIssue[] }) {
 
       <MountingHoles project={project} hole={colors.hole} real={real} label={tr('canvas.hole')} />
 
+      {/* 무선 안테나 금지 구역 (편집 보기에서 표시) */}
+      {!real && keepouts.map((k, i) => (
+        <g key={`ko${i}`} pointerEvents="none">
+          <rect
+            x={k.x1}
+            y={k.y1}
+            width={k.x2 - k.x1}
+            height={k.y2 - k.y1}
+            fill="#f59e0b"
+            fillOpacity={0.12}
+            stroke="#f59e0b"
+            strokeOpacity={0.75}
+            strokeWidth={0.2}
+            strokeDasharray="0.9 0.6"
+          >
+            <title>{tr('canvas.antennaKeepout')}</title>
+          </rect>
+          <text
+            x={(k.x1 + k.x2) / 2}
+            y={(k.y1 + k.y2) / 2}
+            className="keepout-label"
+            textAnchor="middle"
+            dominantBaseline="middle"
+            fontSize={1.4}
+          >
+            ANTENNA KEEPOUT
+          </text>
+        </g>
+      ))}
+
       {/* 부품 (실물 뒷면에서는 앞면 실크스크린을 감춤) */}
-      {partRender.map(({ part, def, box, refStrokes, silk, valY }) => {
+      {partRender.map(({ part, def, box, refStrokes, pinLabelStrokes, silk, valY }) => {
         const isSel = part.ref === selected;
         const hasErr = !real && errorRefs.has(part.ref);
         return (
@@ -347,6 +386,9 @@ export default function PcbCanvas({ issues = [] }: { issues?: DrcIssue[] }) {
             ))}
             {show.silk && !realBack && refStrokes.map((pts, i) => (
               <polyline key={`t${i}`} points={pts} fill="none" stroke={colors.silk} strokeWidth={0.15} strokeLinecap="round" strokeLinejoin="round" />
+            ))}
+            {show.silk && !realBack && pinLabelStrokes.map((pts, i) => (
+              <polyline key={`p${i}`} points={pts} fill="none" stroke={colors.silk} strokeWidth={0.13} strokeLinecap="round" strokeLinejoin="round" />
             ))}
             {!real && part.value && (
               <text x={part.x} y={valY} className="part-value" textAnchor="middle" dominantBaseline="middle" fontSize={0.95}>

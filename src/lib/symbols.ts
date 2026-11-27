@@ -228,6 +228,19 @@ const SYMBOLS: Record<string, () => SchSymbol> = {
   servo: () => box({ right: ['GND', 'VCC', 'SIG'] }),
   usb_power: () => box({ right: ['VBUS', 'GND'] }),
   terminal3: () => box({ right: ['1', '2', '3'] }),
+  dc_jack: () => box({ right: ['VIN', 'GND', 'SW'] }),
+  polyfuse: () => ({
+    pins: two('1', '2'),
+    shapes: [{ k: 'path', d: 'M-3 0H3' }, { k: 'rect', x: -1.4, y: -0.7, w: 2.8, h: 1.4 }],
+    body: BODY2,
+    rotatable: true,
+  }),
+  buck_mod: () => box({ left: ['IN+', 'IN-'], right: ['OUT+', 'OUT-'] }),
+  relay_5v: () => box({ left: ['COIL1', 'COIL2'], right: ['COM', 'NO', 'NC'] }),
+  jst_xh2: () => box({ right: ['1', '2'] }),
+  jst_xh3: () => box({ right: ['1', '2', '3'] }),
+  jst_xh4: () => box({ right: ['1', '2', '3', '4'] }),
+  header2x4: () => box({ left: ['1', '3', '5', '7'], right: ['2', '4', '6', '8'] }),
   arduino_nano: () =>
     box({
       left: ['D0', 'D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7', 'D8', 'D9', 'D10', 'D11', 'D12', 'D13'],

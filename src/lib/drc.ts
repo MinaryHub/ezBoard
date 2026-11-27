@@ -3,10 +3,10 @@ import type { Project } from '../types';
 import { t, type TKey } from '../i18n';
 import { getDef, partBox, placedPads, resolvePin, type PlacedPad } from './library';
 import { netConnections } from './geometry';
-import { HOLE_KEEP, hitsHole, mountingHoles, pourNet } from './features';
+import { HOLE_KEEP, hitsHole, keepoutRects, mountingHoles, pourNet } from './features';
 import { isPowerNet, VIA_D } from './router';
 
-type DrcCode = 'unknownType' | 'offboard' | 'overlap' | 'badPin' | 'singlePin' | 'unused' | 'short' | 'ledNoR' | 'capPolarity' | 'noTracks' | 'unrouted' | 'clearance' | 'hole' | 'holeCopper' | 'noGndPour' | 'ok';
+type DrcCode = 'unknownType' | 'offboard' | 'overlap' | 'badPin' | 'singlePin' | 'unused' | 'short' | 'ledNoR' | 'capPolarity' | 'voltMix' | 'i2cPullup' | 'decoupling' | 'antennaKeepout' | 'noTracks' | 'unrouted' | 'clearance' | 'hole' | 'holeCopper' | 'noGndPour' | 'ok';
 const m = (code: DrcCode, vars?: Record<string, string | number>) => ({ code, message: t(`drc.${code}` as TKey, vars) });
 
 export interface DrcIssue {
@@ -148,6 +148,39 @@ export function netlistIssues(project: Project): DrcIssue[] {
       issues.push({ level: 'info', ...m('capPolarity', { ref: p.ref, net: minus.name }), refs: [p.ref] });
   }
 
+  // 3.3V 전용 MCU(ESP32, 피코) GPIO 핀에 5V 이상 전원 레일 직결 경고
+  const HIGH_V_NET = /^(?:5v0?|vbus|vin|9v|12v|24v|vm)\d*$/i;
+  const SAFE_3V3_MCU_PINS = new Set(['VIN', 'VBUS', 'VSYS', 'GND', 'AGND', '3V3']);
+  for (const p of parts.filter((x) => x.type === 'esp32_devkit' || x.type === 'pico')) {
+    for (const net of nets) {
+      if (!HIGH_V_NET.test(net.name.trim())) continue;
+      for (const pin of net.pins) {
+        const pads = resolvePin([p], pin);
+        if (!pads.length) continue;
+        const pn = pads[0].pin.toUpperCase();
+        if (!SAFE_3V3_MCU_PINS.has(pn)) {
+          issues.push({ level: 'warning', ...m('voltMix', { pin: `${p.ref}.${pads[0].pin}`, net: net.name }), refs: [p.ref] });
+        }
+      }
+    }
+  }
+
+  // I2C (SDA/SCL) 풀업 저항 권장 안내 (모듈 내장일 수도 있으므로 info)
+  const i2cNets = nets.filter((n) => /^(?:sda|scl)$/i.test(n.name.trim()));
+  if (i2cNets.length >= 2) {
+    const hasPullup = i2cNets.every((n) => n.pins.some((x) => {
+      const ref = x.slice(0, x.lastIndexOf('.')).trim().toLowerCase();
+      return partByRef.get(ref)?.type === 'resistor';
+    }));
+    if (!hasPullup) issues.push({ level: 'info', ...m('i2cPullup') });
+  }
+
+  // 능동 IC 디커플링 세라믹 커패시터 권장 안내
+  const hasActiveIc = parts.some((p) => /^(?:ne555|lm358|hc595|uln2003|l293d|ic_dip\d+)$/.test(p.type));
+  if (hasActiveIc && !parts.some((p) => p.type === 'capacitor')) {
+    issues.push({ level: 'info', ...m('decoupling') });
+  }
+
   return issues;
 }
 
@@ -180,6 +213,24 @@ export function runDrc(project: Project): DrcIssue[] {
     if (bad.size) issues.push({ level: 'error', ...m('holeCopper', { nets: [...bad].join(', ') }) });
   }
   if (project.pour && nets.length && !pourNet(project)) issues.push({ level: 'info', ...m('noGndPour') });
+
+  // 안테나 킵아웃 영역 구리 침범 검사
+  const keepouts = keepoutRects(project);
+  if (keepouts.length) {
+    const bad = new Set<string>();
+    for (const k of keepouts) {
+      for (const tr of project.tracks) {
+        for (let i = 1; i < tr.points.length; i++) {
+          const [a, b] = [tr.points[i - 1], tr.points[i]];
+          if (segAabbDist(a[0], a[1], b[0], b[1], k.x1, k.y1, k.x2, k.y2) < tr.width / 2) bad.add(tr.net);
+        }
+      }
+      for (const v of project.vias) {
+        if (v.x + VIA_D / 2 > k.x1 && v.x - VIA_D / 2 < k.x2 && v.y + VIA_D / 2 > k.y1 && v.y - VIA_D / 2 < k.y2) bad.add(v.net);
+      }
+    }
+    if (bad.size) issues.push({ level: 'warning', ...m('antennaKeepout', { nets: [...bad].join(', ') }) });
+  }
 
   for (let i = 0; i < parts.length; i++)
     for (let j = i + 1; j < parts.length; j++) {

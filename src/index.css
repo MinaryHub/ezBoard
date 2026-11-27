@@ -514,3 +514,15 @@ code, kbd {
   background: var(--raised); border: 2px dashed var(--accent); color: var(--text); font-size: 14px; font-weight: 500;
 }
 
+/* ── 넷 배선 폭 선택 & 안테나 킵아웃 라벨 ── */
+.net-head-actions { display: inline-flex; align-items: center; gap: 4px; }
+.net-width {
+  height: 22px; padding: 0 5px; font-size: 10.5px; font-family: var(--mono);
+  background: var(--bg); color: var(--text-dim); border: 1px solid var(--border-strong); border-radius: 4px;
+}
+.net-width:focus { outline: none; border-color: var(--accent); color: var(--text); }
+.keepout-label {
+  fill: #f59e0b; font-family: var(--mono); font-weight: 600; letter-spacing: 0.08em; pointer-events: none;
+}
+
+

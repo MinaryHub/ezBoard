@@ -69,8 +69,13 @@ export function sanitizeProject(raw: unknown): Project | null {
     }));
   const nets = Array.isArray(r.nets)
     ? r.nets
-      .filter((n): n is { name: string; pins: unknown[] } => !!n && typeof n === 'object' && typeof (n as { name?: unknown }).name === 'string' && Array.isArray((n as { pins?: unknown }).pins))
-      .map((n) => ({ name: n.name, pins: n.pins.map(String) }))
+      .filter((n): n is { name: string; pins: unknown[]; width?: unknown } => !!n && typeof n === 'object' && typeof (n as { name?: unknown }).name === 'string' && Array.isArray((n as { pins?: unknown }).pins))
+      .map((n) => {
+        const w = Number(n.width);
+        return Number.isFinite(w) && w >= 0.25 && w <= 3.0
+          ? { name: n.name, pins: n.pins.map(String), width: Math.round(w * 100) / 100 }
+          : { name: n.name, pins: n.pins.map(String) };
+      })
     : [];
   const tracks = Array.isArray(r.tracks)
     ? r.tracks.filter((tr) => !!tr && typeof tr === 'object' && Array.isArray((tr as { points?: unknown }).points))

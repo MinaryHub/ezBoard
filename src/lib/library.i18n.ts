@@ -51,6 +51,11 @@ const EN: Record<string, En> = {
   usb_power: { name: 'USB-C power module', desc: 'Connects the + / - pins of a USB-C power breakout so you can use a phone charger for 5V.', pinHelp: 'VBUS = 5V (+), GND = -', value: 'USB-C 5V' },
   terminal3: { name: '3-pin screw terminal', desc: 'A 3-pin terminal that clamps wires with screws. For motors, relay outputs or sensor wires.', pinHelp: '1, 2, 3' },
   buzzer: { name: 'Buzzer', desc: 'Makes sound. An active buzzer beeps as soon as it gets power. It has +/- polarity.', pinHelp: '+ (long leg), -', value: 'Active 5V' },
+  dc_jack: { name: 'DC barrel jack (5.5×2.1)', desc: 'Standard round DC power socket (5.5×2.1mm, center positive, PJ-002A).', pinHelp: 'VIN (center +), GND (sleeve -), SW (plug detect switch, optional)' },
+  polyfuse: { name: 'Resettable fuse (PTC)', desc: 'Trips on overcurrent and resets once cool. Place in series with power input to protect the board.', pinHelp: '1, 2 (no direction)' },
+  buck_mod: { name: 'DC-DC buck module', desc: 'Step-down converter module (LM2596/MP1584) for efficient 12–24V to 5V/3.3V conversion at higher currents.', pinHelp: 'IN+, IN- (input), OUT+, OUT- (regulated output)' },
+  relay_5v: { name: '5V relay (SRD-05VDC)', desc: 'Electromechanical switch for high-power loads. Drive the coil via a transistor/ULN2003 and add a reverse flyback diode (1N4007) across COIL1–COIL2.', pinHelp: 'COIL1/COIL2 (coil), COM (common), NO (normally open), NC (normally closed)' },
+  header2x4: { name: '2×4 pin header (8-pin)', desc: 'Dual-row 8-pin header for NRF24L01 modules, ISP programmers, or SPI expansion.', pinHelp: '1–8 (top 1,3,5,7 / bottom 2,4,6,8)' },
 };
 
 const en = (def: PartDef): En | undefined => {
@@ -59,6 +64,8 @@ const en = (def: PartDef): En | undefined => {
   if (dip) return { name: `Generic IC (DIP-${dip[1]})`, desc: `A ${dip[1]}-pin DIP IC. Connect by pin number (1–${dip[1]}). Pin 1 is next to the dot mark.`, pinHelp: `1 – ${dip[1]}` };
   const hdr = def.type.match(/^header(\d+)$/);
   if (hdr) return { name: `Pin header, ${hdr[1]} pins`, desc: `A ${hdr[1]}-pin connector for external sensors, modules, or wires.`, pinHelp: `1 – ${hdr[1]}` };
+  const jst = def.type.match(/^jst_xh(\d+)$/);
+  if (jst) return { name: `JST-XH ${jst[1]}-pin connector`, desc: `Keyed 2.5mm locking wire connector (${jst[1]}-pin) that prevents reverse plugging. Great for batteries, fans, and sensors.`, pinHelp: `1 – ${jst[1]} (check top notch for orientation)` };
   return undefined;
 };
 

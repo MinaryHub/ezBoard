@@ -4,14 +4,17 @@ import { getDef, LIBRARY_LIST, nextRef, placedPads, resolvePin } from '../lib/li
 import { catName, partDefaultValue, partDesc, partName, partPinHelp } from '../lib/library.i18n';
 import type { DrcIssue } from '../lib/drc';
 import { bomItems, buildBom, buildGerberOnlyZip, buildZip } from '../lib/gerber';
+import { exportKicadPcb } from '../lib/kicad';
+import { exportTrueScaleSvg, printTrueScale } from '../lib/exportImage';
 import { saveFile } from '../lib/platform';
 import { t as tt, useLang, useT, type TKey } from '../i18n';
 import Icon, { type IconName } from './Icon';
 
 export type Tab = 'part' | 'add' | 'nets' | 'check' | 'order';
 const TABS: Tab[] = ['part', 'add', 'nets', 'check', 'order'];
-const CIRCUIT_FIX_CODES = new Set(['badPin', 'short', 'singlePin', 'unused', 'ledNoR', 'unknownType']);
-const LAYOUT_FIX_CODES = new Set(['overlap', 'offboard', 'holePart', 'unrouted', 'clearance', 'noTracks']);
+const CIRCUIT_FIX_CODES = new Set(['badPin', 'short', 'singlePin', 'unused', 'ledNoR', 'unknownType', 'voltMix']);
+const LAYOUT_FIX_CODES = new Set(['overlap', 'offboard', 'hole', 'holeCopper', 'antennaKeepout', 'unrouted', 'clearance', 'noTracks']);
+const NET_WIDTH_OPTIONS = [0.4, 0.8, 1.2, 1.5, 2.0];
 const BOARD_PRESETS: [number, number][] = [[50, 40], [70, 50], [100, 100]];
 
 async function download(blob: Blob, name: string) {
@@ -266,9 +269,26 @@ function NetsTab() {
         >
           <div className="net-head">
             <span className="net-tag">{n.name}</span>
-            <button className="ghost small" data-tip={t('nets.delete')} aria-label={t('nets.delete')} onClick={() => setNets(project.nets.filter((_, j) => j !== i))}>
-              <Icon name="close" size={13} />
-            </button>
+            <div className="net-head-actions">
+              <select
+                className="net-width"
+                aria-label={`${n.name} ${t('nets.width')}`}
+                data-tip={t('nets.width')}
+                value={n.width ?? ''}
+                onChange={(e) => {
+                  const v = e.target.value ? Number(e.target.value) : undefined;
+                  setNets(project.nets.map((x, j) => (j === i ? (v ? { ...x, width: v } : { name: x.name, pins: x.pins }) : x)));
+                }}
+              >
+                <option value="">{t('nets.widthAuto')}</option>
+                {NET_WIDTH_OPTIONS.map((w) => (
+                  <option key={w} value={w}>{w}mm</option>
+                ))}
+              </select>
+              <button className="ghost small" data-tip={t('nets.delete')} aria-label={t('nets.delete')} onClick={() => setNets(project.nets.filter((_, j) => j !== i))}>
+                <Icon name="close" size={13} />
+              </button>
+            </div>
           </div>
           <div className="pin-chips">
             {n.pins.map((p, k) => {
@@ -426,20 +446,48 @@ function OrderTab({ issues, onExportImage }: { issues: DrcIssue[]; onExportImage
       <button className="block" disabled={!project.parts.length} data-tip={t('tip.orderBom')} onClick={() => download(new Blob([buildBom(project)], { type: 'text/csv' }), `${fileBase(project.name)}_BOM.csv`)}>
         {t('order.bom')}
       </button>
+      <button
+        className="block"
+        disabled={!project.parts.length}
+        data-tip={t('tip.orderKicad')}
+        onClick={() => download(new Blob([exportKicadPcb(project)], { type: 'text/plain;charset=utf-8' }), `${fileBase(project.name)}.kicad_pcb`)}
+      >
+        {t('order.kicad')}
+      </button>
 
+      <div className="section-label">{t('order.exportImg')}</div>
       {onExportImage && (
-        <>
-          <div className="section-label">{t('order.exportImg')}</div>
-          <div className="row">
-            <button type="button" style={{ flex: 1 }} disabled={!project.parts.length} onClick={() => onExportImage('png')}>
-              <Icon name="image" size={14} />{t('order.exportPng')}
-            </button>
-            <button type="button" style={{ flex: 1 }} disabled={!project.parts.length} onClick={() => onExportImage('svg')}>
-              <Icon name="image" size={14} />{t('order.exportSvg')}
-            </button>
-          </div>
-        </>
+        <div className="row">
+          <button type="button" style={{ flex: 1 }} disabled={!project.parts.length} onClick={() => onExportImage('png')}>
+            <Icon name="image" size={14} />{t('order.exportPng')}
+          </button>
+          <button type="button" style={{ flex: 1 }} disabled={!project.parts.length} onClick={() => onExportImage('svg')}>
+            <Icon name="image" size={14} />{t('order.exportSvg')}
+          </button>
+        </div>
       )}
+      <div className="row">
+        <button
+          type="button"
+          style={{ flex: 1 }}
+          disabled={!project.parts.length}
+          data-tip={t('tip.print1to1')}
+          onClick={() => {
+            if (!printTrueScale(project)) void exportTrueScaleSvg(project, `${fileBase(project.name)}_1to1.svg`);
+          }}
+        >
+          {t('order.print1to1')}
+        </button>
+        <button
+          type="button"
+          style={{ flex: 1 }}
+          disabled={!project.parts.length}
+          data-tip={t('tip.print1to1')}
+          onClick={() => void exportTrueScaleSvg(project, `${fileBase(project.name)}_1to1.svg`)}
+        >
+          {t('order.svg1to1')}
+        </button>
+      </div>
 
       <div className="section-label">{t('order.how')}</div>
       <ol className="steps-guide">

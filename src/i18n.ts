@@ -376,6 +376,19 @@ const ko = {
   'keys.altPin': '핀 연결 끊기',
   'keys.esc': '선택·창 닫기',
   'vp.pcbRealBack': 'PCB · 실물 (뒷면)',
+  // 실전 하드웨어 점검 & 내보내기 (TOP 1~5)
+  'drc.voltMix': '3.3V 보드 핀 {pin}이(가) 높은 전압 넷 "{net}"에 연결되어 있어요. 칩이 손상될 수 있으니 3.3V로 연결하거나 레벨 시프터를 쓰세요.',
+  'drc.i2cPullup': 'I2C(SDA/SCL) 선에 풀업 저항이 보이지 않아요. 모듈에 내장되어 있지 않다면 4.7kΩ 저항을 VCC에 연결하세요.',
+  'drc.decoupling': '능동 IC 근처에 100nF(0.1µF) 세라믹 디커플링 커패시터가 없어요. 전원 안정화를 위해 추가를 권장해요.',
+  'drc.antennaKeepout': '무선 안테나 금지 구역에 구리 배선/비아가 지나가요 ({nets}). Wi-Fi/BLE 수신 감도가 떨어지니 다시 배선하세요.',
+  'nets.width': '배선 폭',
+  'nets.widthAuto': '자동',
+  'order.kicad': 'KiCad 보드 (.kicad_pcb)',
+  'tip.orderKicad': 'KiCad 8에서 바로 열어 수동 수정·3D 확인·고급 DRC를 이어갈 수 있는 보드 파일이에요.',
+  'order.print1to1': '1:1 실寸 인쇄',
+  'order.svg1to1': '1:1 실寸 SVG',
+  'tip.print1to1': '실제 mm 크기로 인쇄해 부품을 종이 위에 대보고 크기를 검증할 수 있어요 (인쇄 배율 100%).',
+  'canvas.antennaKeepout': '안테나 금지 구역 (구리/배선 금지)',
 };
 
 type Dict = Record<keyof typeof ko, string>;
@@ -742,6 +755,19 @@ const en: Dict = {
   'keys.altPin': 'Disconnect pin',
   'keys.esc': 'Clear selection / close',
   'vp.pcbRealBack': 'PCB · Realistic (Back)',
+  // Real-world hardware checks & exports (TOP 1-5)
+  'drc.voltMix': '3.3V board pin {pin} is connected to high-voltage net "{net}". This can damage the chip — use 3.3V or a level shifter.',
+  'drc.i2cPullup': 'No pull-up resistors detected on I2C (SDA/SCL) lines. Add 4.7kΩ resistors to VCC unless your module has built-in pull-ups.',
+  'drc.decoupling': 'No 100nF (0.1µF) ceramic decoupling capacitor found near active ICs. Adding one is recommended for stable power.',
+  'drc.antennaKeepout': 'Copper traces or vias enter the wireless antenna keep-out zone ({nets}). Re-route to protect Wi-Fi/BLE reception.',
+  'nets.width': 'Trace width',
+  'nets.widthAuto': 'Auto',
+  'order.kicad': 'KiCad board (.kicad_pcb)',
+  'tip.orderKicad': 'Open directly in KiCad 8 for manual tweaks, 3D preview, or advanced DRC.',
+  'order.print1to1': 'Print 1:1 scale',
+  'order.svg1to1': '1:1 scale SVG',
+  'tip.print1to1': 'Print at exact mm dimensions (100% scale) to test-fit physical parts on paper before ordering.',
+  'canvas.antennaKeepout': 'Antenna keep-out zone (no copper/traces)',
 };
 
 export type TKey = keyof typeof ko;

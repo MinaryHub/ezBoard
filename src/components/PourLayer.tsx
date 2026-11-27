@@ -4,7 +4,7 @@ import { memo, useMemo } from 'react';
 import type { Project } from '../types';
 import { placedPads, resolvePin, type PlacedPad } from '../lib/library';
 import { VIA_D } from '../lib/router';
-import { HOLE_D, HOLE_KEEP, POUR_CLEAR, POUR_EDGE, SPOKE_W, mountingHoles, pourNet, thermalSpokes } from '../lib/features';
+import { HOLE_D, HOLE_KEEP, POUR_CLEAR, POUR_EDGE, SPOKE_W, keepoutRects, mountingHoles, pourNet, thermalSpokes } from '../lib/features';
 
 type Side = 'top' | 'bottom';
 
@@ -30,6 +30,7 @@ export const PourLayer = memo(function PourLayer({ project, side, color, opacity
       tracks: project.tracks.filter((tr) => tr.layer === side && tr.net !== gnd),
       vias: project.vias.filter((v) => v.net !== gnd),
       holes: mountingHoles(project),
+      keepouts: keepoutRects(project),
     };
   }, [project, side, opacity]);
 
@@ -59,6 +60,7 @@ export const PourLayer = memo(function PourLayer({ project, side, color, opacity
         ))}
         {data.vias.map((v, i) => <circle key={`v${i}`} cx={v.x} cy={v.y} r={VIA_D / 2 + POUR_CLEAR} fill="black" />)}
         {data.holes.map(([x, y], i) => <circle key={`h${i}`} cx={x} cy={y} r={HOLE_KEEP} fill="black" />)}
+        {data.keepouts.map((k, i) => <rect key={`k${i}`} x={k.x1} y={k.y1} width={k.x2 - k.x1} height={k.y2 - k.y1} fill="black" />)}
       </mask>
       <rect x={0} y={0} width={w} height={h} fill={color} fillOpacity={opacity} mask={`url(#${id})`} />
     </g>

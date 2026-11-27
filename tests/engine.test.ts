@@ -395,4 +395,178 @@ test('findFreeSpot: places new/duplicated part without overlapping existing part
   assert.ok(!hitsHole(mountingHoles(p), b2), 'new spot must not hit mounting holes');
 });
 
+// ── TOP 1~5 실전 하드웨어 준비도 테스트 ──
+import { LIBRARY } from '../src/lib/library';
+import { partPinSilkLabels } from '../src/lib/gerber';
+import { keepoutRects } from '../src/lib/features';
+import { exportKicadPcb } from '../src/lib/kicad';
+import { renderPcbSvg, renderSchematicSvg, renderTrueScaleSvg } from '../src/lib/renderSvg';
+import { netTrackWidth } from '../src/lib/router';
+
+test('TOP 1: silkscreen pin labels for connectors/power/RGB LED and LED polarity marks', () => {
+  const j1: Project['parts'][number] = { ref: 'J1', type: 'power_in', value: '5V', x: 25, y: 20, rot: 0 };
+  const labels = partPinSilkLabels(j1, { width: 50, height: 40 });
+  assert.deepEqual(labels.map((l) => l.text).sort(), ['+', '-']);
+
+  const oled: Project['parts'][number] = { ref: 'J2', type: 'oled_i2c', value: 'SSD1306', x: 25, y: 20, rot: 0 };
+  const oledLabels = partPinSilkLabels(oled, { width: 50, height: 40 });
+  assert.deepEqual(oledLabels.map((l) => l.text).sort(), ['GND', 'SCL', 'SDA', 'VCC']);
+
+  const ledDef = LIBRARY.led;
+  assert.ok(ledDef.footprint.silk.length >= 4, 'LED silkscreen should include circle, cathode flat, and + mark');
+});
+
+test('TOP 2: ESP32 antenna keepout blocks router, clears Gerber pour, and triggers DRC warning when violated', () => {
+  const circuit: AiCircuit = {
+    name: 'ESP32 Keepout Test',
+    parts: [
+      { ref: 'A1', type: 'esp32_devkit' },
+      { ref: 'J1', type: 'usb_power' },
+      { ref: 'R1', type: 'resistor', value: '330Ω' },
+      { ref: 'LED1', type: 'led', value: '빨강' },
+    ],
+    nets: [
+      { name: '5V', pins: ['J1.VBUS', 'A1.VIN'] },
+      { name: 'GND', pins: ['J1.GND', 'A1.GND', 'LED1.K'] },
+      { name: 'LED_DRV', pins: ['A1.D2', 'R1.1'] },
+      { name: 'LED_A', pins: ['R1.2', 'LED1.A'] },
+    ],
+  };
+  const { project, route } = buildFromCircuit(blank({ pour: true }), circuit);
+  assert.equal(route.failed.length, 0);
+  const kos = keepoutRects(project);
+  assert.equal(kos.length, 1);
+  assert.equal(kos[0].reason, 'antenna');
+  // 정상 자동배선 결과에는 안테나 킵아웃 경고가 없어야 함
+  assert.equal(runDrc(project).some((i) => i.code === 'antennaKeepout'), false);
+  // 강제로 킵아웃 내부에 배선을 넣으면 DRC 경고가 떠야 함
+  const k = kos[0];
+  const violated: Project = {
+    ...project,
+    tracks: [...project.tracks, { net: 'LED_DRV', layer: 'top', width: 0.4, points: [[k.x1 + 1, (k.y1 + k.y2) / 2], [k.x2 - 1, (k.y1 + k.y2) / 2]] }],
+  };
+  assert.equal(runDrc(violated).some((i) => i.code === 'antennaKeepout'), true);
+});
+
+test('TOP 2: real-world ERC detects 5V on 3.3V MCU GPIO, missing I2C pull-ups, and missing decoupling cap', () => {
+  const bad3v3 = blank({
+    parts: [
+      { ref: 'A1', type: 'esp32_devkit', value: 'ESP32', x: 35, y: 35, rot: 0 },
+      { ref: 'J1', type: 'usb_power', value: '5V', x: 10, y: 10, rot: 0 },
+    ],
+    nets: [
+      { name: '5V', pins: ['J1.VBUS', 'A1.D4'] }, // 위험: 3.3V GPIO에 5V 직결
+      { name: 'GND', pins: ['J1.GND', 'A1.GND'] },
+    ],
+  });
+  assert.equal(runDrc(bad3v3).some((i) => i.code === 'voltMix'), true);
+
+  const i2cNoPullup = blank({
+    parts: [
+      { ref: 'A1', type: 'esp32_devkit', value: 'ESP32', x: 35, y: 35, rot: 0 },
+      { ref: 'J2', type: 'oled_i2c', value: 'OLED', x: 12, y: 12, rot: 0 },
+    ],
+    nets: [
+      { name: '3V3', pins: ['A1.3V3', 'J2.VCC'] },
+      { name: 'GND', pins: ['A1.GND', 'J2.GND'] },
+      { name: 'SDA', pins: ['A1.D21', 'J2.SDA'] },
+      { name: 'SCL', pins: ['A1.D22', 'J2.SCL'] },
+    ],
+  });
+  assert.equal(runDrc(i2cNoPullup).some((i) => i.code === 'i2cPullup'), true);
+});
+
+test('TOP 3: per-net custom trace width and 1:1 true-scale SVG with calibration ruler', () => {
+  assert.equal(netTrackWidth({ name: 'SIG', pins: [], width: 1.5 }), 1.5);
+  assert.equal(netTrackWidth({ name: '5V', pins: [] }), 0.8);
+  assert.equal(netTrackWidth({ name: 'SIG', pins: [] }), 0.4);
+
+  const circuit: AiCircuit = {
+    name: 'Power Trace Width Test',
+    parts: [
+      { ref: 'J1', type: 'dc_jack', value: '12V' },
+      { ref: 'F1', type: 'polyfuse', value: '1A' },
+      { ref: 'U1', type: 'buck_mod', value: 'LM2596' },
+      { ref: 'J2', type: 'jst_xh2', value: '5V OUT' },
+    ],
+    nets: [
+      { name: 'VIN_RAW', pins: ['J1.VIN', 'F1.1'], width: 1.5 },
+      { name: 'VIN_FUSED', pins: ['F1.2', 'U1.IN+'], width: 1.5 },
+      { name: '5V', pins: ['U1.OUT+', 'J2.1'], width: 1.2 },
+      { name: 'GND', pins: ['J1.GND', 'U1.IN-', 'U1.OUT-', 'J2.2'], width: 1.2 },
+    ],
+  };
+  const { project, route } = buildFromCircuit(blank({ pour: true }), circuit);
+  assert.equal(route.failed.length, 0, `failed: ${JSON.stringify(route.failed)}`);
+  assert.ok(project.tracks.some((tr) => tr.net === 'VIN_RAW' && tr.width === 1.5));
+  assert.ok(project.tracks.some((tr) => tr.net === '5V' && tr.width === 1.2));
+
+  const svg1to1 = renderTrueScaleSvg(project);
+  assert.match(svg1to1, /width="\d+(\.\d+)?mm"/);
+  assert.match(svg1to1, /1:1 TRUE SCALE/);
+  assert.match(svg1to1, /1:1 ruler/);
+  assert.match(renderPcbSvg(project, { mode: 'real' }), /<svg /);
+  assert.match(renderSchematicSvg(project), /<svg /);
+});
+
+test('TOP 4: all 8 new real-world parts route cleanly in a relay + buck + JST circuit', () => {
+  assert.ok(LIBRARY_LIST.length >= 52, `expected >=52 parts, got ${LIBRARY_LIST.length}`);
+  const circuit: AiCircuit = {
+    name: '12V Relay Controller',
+    parts: [
+      { ref: 'J1', type: 'dc_jack', value: '12V' },
+      { ref: 'F1', type: 'polyfuse', value: '1A' },
+      { ref: 'U1', type: 'buck_mod', value: '5V 2A' },
+      { ref: 'K1', type: 'relay_5v', value: 'SRD-05VDC' },
+      { ref: 'D1', type: 'diode', value: '1N4007' },
+      { ref: 'Q1', type: 'npn', value: '2N2222' },
+      { ref: 'R1', type: 'resistor', value: '1kΩ' },
+      { ref: 'J2', type: 'jst_xh3', value: 'CTRL' },
+      { ref: 'J3', type: 'jst_xh4', value: 'LOAD' },
+      { ref: 'J4', type: 'header2x4', value: 'EXT' },
+    ],
+    nets: [
+      { name: '12V', pins: ['J1.VIN', 'F1.1'] },
+      { name: '12V_F', pins: ['F1.2', 'U1.IN+'] },
+      { name: '5V', pins: ['U1.OUT+', 'K1.COIL1', 'D1.K', 'J2.1', 'J4.1'] },
+      { name: 'GND', pins: ['J1.GND', 'U1.IN-', 'U1.OUT-', 'Q1.E', 'J2.3', 'J4.2'] },
+      { name: 'CTRL', pins: ['J2.2', 'R1.1'] },
+      { name: 'BASE', pins: ['R1.2', 'Q1.B'] },
+      { name: 'COIL_L', pins: ['K1.COIL2', 'D1.A', 'Q1.C'] },
+      { name: 'RLY_COM', pins: ['K1.COM', 'J3.1'] },
+      { name: 'RLY_NO', pins: ['K1.NO', 'J3.2'] },
+      { name: 'RLY_NC', pins: ['K1.NC', 'J3.3'] },
+      { name: 'AUX', pins: ['J3.4', 'J4.3'] },
+    ],
+  };
+  const { project, route } = buildFromCircuit(blank({ pour: true, holes: true }), circuit);
+  assert.equal(route.failed.length, 0, `failed: ${JSON.stringify(route.failed)}`);
+  assert.deepEqual(errors(project).map((e) => e.message), []);
+});
+
+test('TOP 5: KiCad 8 .kicad_pcb export contains valid S-expressions, footprints, segments, vias, keepouts, and zones', () => {
+  const { project } = buildFromCircuit(blank({ pour: true, holes: true }), NEW_PART_CIRCUITS[0][1]);
+  const pcb = exportKicadPcb(project);
+  assert.ok(pcb.startsWith('(kicad_pcb\n'));
+  assert.match(pcb, /\(version 20240108\)/);
+  assert.match(pcb, /\(gr_rect \(start 0 0\)/);
+  assert.match(pcb, /\(footprint "ezBoard:ESP32_DevKit_V1_30pin"/);
+  assert.match(pcb, /\(footprint "MountingHole:MountingHole_3\.2mm_M3"/);
+  assert.match(pcb, /\(segment \(start /);
+  assert.match(pcb, /\(keepout \(tracks not_allowed\)/);
+  assert.match(pcb, /\(zone \(net \d+\) \(net_name "GND"\)/);
+  // 괄호 균형 검증
+  let depth = 0;
+  let inStr = false;
+  for (let i = 0; i < pcb.length; i++) {
+    const ch = pcb[i];
+    if (ch === '"' && pcb[i - 1] !== '\\') inStr = !inStr;
+    else if (!inStr && ch === '(') depth++;
+    else if (!inStr && ch === ')') depth--;
+    assert.ok(depth >= 0, 'unbalanced closing paren in .kicad_pcb');
+  }
+  assert.equal(depth, 0, 'unbalanced parens in .kicad_pcb');
+});
+
+
 

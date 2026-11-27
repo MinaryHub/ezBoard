@@ -16,12 +16,24 @@ export type SilkShape =
   | { kind: 'line'; x1: number; y1: number; x2: number; y2: number }
   | { kind: 'circle'; x: number; y: number; r: number };
 
+export interface KeepoutZone {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  reason: string;
+}
+
 export interface Footprint {
   name: string;
   pads: Pad[];
   silk: SilkShape[];
   w: number;              // 점유 영역 (courtyard) 크기
   h: number;
+  /** 보드 실크스크린에 핀 이름(VCC, GND 등)을 함께 인쇄 */
+  pinLabels?: boolean;
+  /** 구리 채우기·배선 금지 영역 (예: ESP32 Wi-Fi 안테나) */
+  keepout?: KeepoutZone[];
 }
 
 export interface PartDef {
@@ -162,9 +174,40 @@ function module2(name: string, left: string[], right: string[], rowSpacing: numb
   return { name, pads, silk: rect(0, 0, bodyW, bodyH), w: bodyW + 0.6, h: bodyH + 0.6 };
 }
 
-/** 이름 붙은 핀 헤더 (모듈 연결용) */
+/** 이름 붙은 핀 헤더 (모듈 연결용 — 보드 실크스크린에 핀 이름 인쇄) */
 function namedHeader(pins: string[], name: string): Footprint {
-  return { ...header(pins.length), name, pads: inline(pins, 2.54, 1.7, 1.0) };
+  return { ...header(pins.length), name, pads: inline(pins, 2.54, 1.7, 1.0), pinLabels: true };
+}
+
+/** JST-XH 2.5mm 슈라우드 커넥터 (극성 노치 표시 포함) */
+function jstXh(n: number): Footprint {
+  const pins = Array.from({ length: n }, (_, i) => String(i + 1));
+  const pads = inline(pins, 2.5, 1.7, 0.9);
+  const bw = n * 2.5 + 2.4;
+  const bh = 5.8;
+  const silk: SilkShape[] = [
+    ...rect(0, 0, bw, bh),
+    // 상단 극성 노치 표시
+    line(-bw / 4, -bh / 2, -bw / 4, -bh / 2 + 1.1),
+    line(bw / 4, -bh / 2, bw / 4, -bh / 2 + 1.1),
+    line(-bw / 4, -bh / 2 + 1.1, bw / 4, -bh / 2 + 1.1),
+  ];
+  return { name: `JST_XH_1x${n}`, pads, silk, w: bw + 0.8, h: bh + 0.8 };
+}
+
+/** 2열 핀 헤더 (2×cols, 2.54mm 격자) */
+function header2x(cols: number): Footprint {
+  const pads: Pad[] = [];
+  for (let c = 0; c < cols; c++) {
+    const x = (c - (cols - 1) / 2) * 2.54;
+    const n1 = c * 2 + 1;
+    const n2 = c * 2 + 2;
+    pads.push({ num: n1, pin: String(n1), x, y: -1.27, w: 1.7, h: 1.7, shape: n1 === 1 ? 'rect' : 'circle', drill: 1.0 });
+    pads.push({ num: n2, pin: String(n2), x, y: 1.27, w: 1.7, h: 1.7, shape: 'circle', drill: 1.0 });
+  }
+  const bw = cols * 2.54;
+  const bh = 5.08;
+  return { name: `PinHeader_2x${cols}`, pads, silk: rect(0, 0, bw, bh), w: bw + 0.6, h: bh + 0.8 };
 }
 
 const defs: PartDef[] = [
@@ -190,7 +233,19 @@ const defs: PartDef[] = [
     type: 'led', name: 'LED (5mm)', category: '기본 부품', prefix: 'LED', defaultValue: '빨강',
     desc: '빛을 내는 다이오드입니다. 반드시 저항과 함께 써야 타지 않아요. 다리가 긴 쪽이 A(+), 짧은 쪽이 K(-)입니다.',
     pinHelp: 'A = 애노드(+, 긴 다리), K = 캐소드(-, 짧은 다리)',
-    footprint: { ...radial('K', 'A', 2.54, 2.9), name: 'LED_D5.0mm' },
+    footprint: {
+      name: 'LED_D5.0mm',
+      pads: inline(['K', 'A'], 2.54),
+      silk: [
+        { kind: 'circle', x: 0, y: 0, r: 2.9 },
+        // 캐소드(K) 평면(flat) 및 애노드(+) 표시
+        line(-2.3, -1.7, -2.3, 1.7),
+        line(3.2, -2.2, 4.0, -2.2),
+        line(3.6, -2.6, 3.6, -1.8),
+      ],
+      w: 8.8,
+      h: 6.8,
+    },
   },
   {
     type: 'diode', name: '다이오드', category: '기본 부품', prefix: 'D', defaultValue: '1N4007',
@@ -238,7 +293,7 @@ const defs: PartDef[] = [
     type: 'power_in', name: '전원 단자', category: '전원', prefix: 'J', defaultValue: '5V 입력',
     desc: '나사로 전선을 고정하는 전원 입력 단자입니다. 배터리나 어댑터 선을 연결해요.',
     pinHelp: '+ = 전원 플러스, - = GND',
-    footprint: { ...header(2), name: 'TerminalBlock_P5.08', pads: inline(['+', '-'], 5.08, 2.4, 1.3), silk: rect(0, 0, 10.2, 7.6), w: 10.8, h: 8.2 },
+    footprint: { ...header(2), name: 'TerminalBlock_P5.08', pads: inline(['+', '-'], 5.08, 2.4, 1.3), silk: rect(0, 0, 10.2, 7.6), w: 10.8, h: 8.2, pinLabels: true },
   },
   {
     type: 'ne555', name: '555 타이머', category: 'IC', prefix: 'U', defaultValue: 'NE555',
@@ -317,7 +372,7 @@ const defs: PartDef[] = [
     type: 'rgb_led', name: 'RGB LED (공통 캐소드)', category: '기본 부품', prefix: 'LED', defaultValue: '5mm RGB',
     desc: '빨강·초록·파랑을 섞어 여러 색을 내는 LED입니다. 색마다 저항을 따로 달아야 해요. 가장 긴 다리가 공통 K(-)입니다.',
     pinHelp: 'R, K(가장 긴 다리, 공통 -), G, B',
-    footprint: { name: 'LED_RGB_D5.0mm', pads: inline(['R', 'K', 'G', 'B'], 2.54, 1.6, 0.8), silk: [{ kind: 'circle', x: 0, y: 0, r: 2.9 }], w: 9.4, h: 6.4 },
+    footprint: { name: 'LED_RGB_D5.0mm', pads: inline(['R', 'K', 'G', 'B'], 2.54, 1.6, 0.8), silk: [{ kind: 'circle', x: 0, y: 0, r: 2.9 }, line(-1.8, -2.2, -1.8, 2.2)], w: 9.4, h: 6.4, pinLabels: true },
   },
   {
     type: 'lm317', name: '가변 레귤레이터', category: '전원', prefix: 'U', defaultValue: 'LM317',
@@ -347,10 +402,15 @@ const defs: PartDef[] = [
     type: 'esp32_devkit', name: 'ESP32 개발 보드', category: '모듈', prefix: 'A', defaultValue: 'ESP32 DevKit V1 (30핀)',
     desc: 'Wi-Fi와 블루투스가 되는 작은 컴퓨터입니다. 3.3V로 동작하니 5V 신호를 바로 넣지 마세요. 핀 소켓(암 헤더)에 꽂아 써요. 30핀 DOIT DevKit V1 기준이에요.',
     pinHelp: 'D2~D35 GPIO, VP=GPIO36, VN=GPIO39 (입력 전용), TX2=GPIO17, RX2=GPIO16, TX0/RX0 (USB 시리얼), EN 리셋, VIN 5V 입력, 3V3, GND',
-    footprint: module2('ESP32_DevKit_V1_30pin',
-      ['EN', 'VP', 'VN', 'D34', 'D35', 'D32', 'D33', 'D25', 'D26', 'D27', 'D14', 'D12', 'D13', 'GND', 'VIN'],
-      ['D23', 'D22', 'TX0', 'RX0', 'D21', 'D19', 'D18', 'D5', 'TX2', 'RX2', 'D4', 'D2', 'D15', 'GND', '3V3'],
-      25.4, 28.4, 51.6, 4),
+    footprint: (() => {
+      const fp = module2('ESP32_DevKit_V1_30pin',
+        ['EN', 'VP', 'VN', 'D34', 'D35', 'D32', 'D33', 'D25', 'D26', 'D27', 'D14', 'D12', 'D13', 'GND', 'VIN'],
+        ['D23', 'D22', 'TX0', 'RX0', 'D21', 'D19', 'D18', 'D5', 'TX2', 'RX2', 'D4', 'D2', 'D15', 'GND', '3V3'],
+        25.4, 28.4, 51.6, 4);
+      fp.silk.push(line(-14.2, -15.5, 14.2, -15.5));
+      fp.keepout = [{ x1: -14.2, y1: -25.8, x2: 14.2, y2: -15.5, reason: 'antenna' }];
+      return fp;
+    })(),
   },
   {
     type: 'pico', name: '라즈베리 파이 피코', category: '모듈', prefix: 'A', defaultValue: 'Raspberry Pi Pico',
@@ -365,7 +425,7 @@ const defs: PartDef[] = [
     type: 'dht22', name: '온습도 센서', category: '입력', prefix: 'U', defaultValue: 'DHT22',
     desc: '온도와 습도를 재는 센서입니다. DATA와 VCC 사이에 10kΩ 풀업 저항을 달아 주세요. 3번 핀(NC)은 연결하지 않아요. DHT11도 핀이 같아요.',
     pinHelp: 'VCC(1), DATA(2), NC(3, 연결 안 함), GND(4)',
-    footprint: { name: 'DHT22_4pin', pads: inline(['VCC', 'DATA', 'NC', 'GND'], 2.54, 1.7, 1.0), silk: rect(0, 0, 15.5, 7.9), w: 16.1, h: 8.5 },
+    footprint: { name: 'DHT22_4pin', pads: inline(['VCC', 'DATA', 'NC', 'GND'], 2.54, 1.7, 1.0), silk: rect(0, 0, 15.5, 7.9), w: 16.1, h: 8.5, pinLabels: true },
   },
   {
     type: 'oled_i2c', name: 'OLED 화면 연결 (I2C)', category: '연결', prefix: 'J', defaultValue: '0.96" SSD1306',
@@ -396,6 +456,79 @@ const defs: PartDef[] = [
     desc: '전선을 나사로 고정하는 3핀 단자입니다. 모터, 릴레이 출력, 센서 선을 연결할 때 써요.',
     pinHelp: '1, 2, 3',
     footprint: { name: 'TerminalBlock_1x3_P5.08', pads: inline(['1', '2', '3'], 5.08, 2.4, 1.3), silk: rect(0, 0, 15.3, 7.6), w: 15.9, h: 8.2 },
+  },
+  // ── 실전 확장 부품 ──
+  {
+    type: 'dc_jack', name: 'DC 배럴잭 (5.5×2.1)', category: '전원', prefix: 'J', defaultValue: 'DC 12V',
+    desc: '일반 원형 전원 어댑터(5.5×2.1mm, 센터 플러스)를 꽂는 소켓입니다. PJ-002A 표준 규격이에요.',
+    pinHelp: 'VIN(중앙 +), GND(바깥 -), SW(플러그 감지 스위치, 미사용 시 비움)',
+    footprint: {
+      name: 'BarrelJack_PJ002A',
+      pads: [
+        { num: 1, pin: 'VIN', x: 0, y: -4.5, w: 2.6, h: 2.6, shape: 'rect', drill: 1.5 },
+        { num: 2, pin: 'GND', x: 0, y: 1.5, w: 2.6, h: 2.6, shape: 'circle', drill: 1.5 },
+        { num: 3, pin: 'SW', x: -4.7, y: -1.5, w: 2.4, h: 2.4, shape: 'circle', drill: 1.4 },
+      ],
+      silk: [...rect(0, 0, 9.0, 14.4), line(-4.5, 5.5, 4.5, 5.5)],
+      w: 12.6,
+      h: 15.0,
+      pinLabels: true,
+    },
+  },
+  {
+    type: 'polyfuse', name: '복구형 퓨즈 (PTC)', category: '전원', prefix: 'F', defaultValue: '500mA',
+    desc: '과전류가 흐르면 자동으로 차단되고, 식으면 다시 복구되는 안전 퓨즈입니다. 전원 입력 직후에 직렬로 달아 보드를 보호해요.',
+    pinHelp: '1, 2 (방향 없음)',
+    footprint: { name: 'Fuse_PTC_P5.08', pads: inline(['1', '2'], 5.08, 1.8, 0.9), silk: rect(0, 0, 6.6, 2.8), w: 7.4, h: 3.6 },
+  },
+  {
+    type: 'buck_mod', name: 'DC-DC 벅 컨버터 모듈', category: '전원', prefix: 'U', defaultValue: 'LM2596/MP1584',
+    desc: '높은 전압(12~24V)을 열 손실 적게 5V/3.3V로 낮춰주는 모듈 소켓입니다. 리니어 레귤레이터보다 큰 전류에 적합해요.',
+    pinHelp: 'IN+, IN- (입력), OUT+, OUT- (강압 출력)',
+    footprint: {
+      name: 'BuckModule_4pin',
+      pads: [
+        { num: 1, pin: 'IN+', x: -16.5, y: -6.5, w: 2.6, h: 2.6, shape: 'rect', drill: 1.3 },
+        { num: 2, pin: 'IN-', x: -16.5, y: 6.5, w: 2.6, h: 2.6, shape: 'circle', drill: 1.3 },
+        { num: 3, pin: 'OUT+', x: 16.5, y: -6.5, w: 2.6, h: 2.6, shape: 'circle', drill: 1.3 },
+        { num: 4, pin: 'OUT-', x: 16.5, y: 6.5, w: 2.6, h: 2.6, shape: 'circle', drill: 1.3 },
+      ],
+      silk: rect(0, 0, 38.0, 19.0),
+      w: 39.0,
+      h: 20.0,
+      pinLabels: true,
+    },
+  },
+  {
+    type: 'relay_5v', name: '5V 릴레이 (SRD-05VDC)', category: '출력', prefix: 'K', defaultValue: 'SRD-05VDC',
+    desc: '작은 제어 신호로 큰 전력 부하를 켜고 끄는 기계식 스위치입니다. 코일은 트랜지스터(NPN/ULN2003)로 구동하고, 코일 양단에 보호 다이오드(1N4007)를 역방향으로 달아 주세요.',
+    pinHelp: 'COIL1/COIL2(코일), COM(공통), NO(평소 열림), NC(평소 닫힘)',
+    footprint: {
+      name: 'Relay_SPDT_SRD',
+      pads: [
+        { num: 1, pin: 'COIL1', x: -6.0, y: -6.0, w: 2.2, h: 2.2, shape: 'rect', drill: 1.2 },
+        { num: 2, pin: 'COM', x: -6.0, y: 0, w: 2.2, h: 2.2, shape: 'circle', drill: 1.2 },
+        { num: 3, pin: 'COIL2', x: -6.0, y: 6.0, w: 2.2, h: 2.2, shape: 'circle', drill: 1.2 },
+        { num: 4, pin: 'NO', x: 6.2, y: 6.0, w: 2.2, h: 2.2, shape: 'circle', drill: 1.2 },
+        { num: 5, pin: 'NC', x: 6.2, y: -6.0, w: 2.2, h: 2.2, shape: 'circle', drill: 1.2 },
+      ],
+      silk: [...rect(0, 0, 19.0, 15.5), line(-1.5, -7.75, -1.5, 7.75)],
+      w: 19.6,
+      h: 16.2,
+      pinLabels: true,
+    },
+  },
+  ...[2, 3, 4].map((n) => ({
+    type: `jst_xh${n}`, name: `JST-XH ${n}핀 커넥터`, category: '연결', prefix: 'J', defaultValue: `XH-${n}P`,
+    desc: `거꾸로 꽂히지 않는 잠금형 2.5mm 와이어 커넥터(${n}핀)입니다. 배터리·센서·팬 연결에 많이 써요.`,
+    pinHelp: `1 ~ ${n} (상단 노치 기준으로 방향 확인)`,
+    footprint: jstXh(n),
+  })),
+  {
+    type: 'header2x4', name: '2열 핀 헤더 2×4 (8핀)', category: '연결', prefix: 'J', defaultValue: '2x4P',
+    desc: 'NRF24L01 무선 모듈, ISP 프로그래머, SPI 확장 등에 쓰는 2열 8핀 헤더입니다.',
+    pinHelp: '1~8 (윗줄 1,3,5,7 / 아랫줄 2,4,6,8)',
+    footprint: header2x(4),
   },
 ];
 

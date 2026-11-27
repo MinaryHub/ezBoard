@@ -2,7 +2,7 @@
 import type { Layer, Project, Track, Via } from '../types';
 import { placedPads, resolvePin, type PlacedPad } from './library';
 import { netConnections } from './geometry';
-import { HOLE_KEEP, mountingHoles } from './features';
+import { HOLE_KEEP, keepoutRects, mountingHoles } from './features';
 
 export const PITCH = 0.635;
 export const TRACK_W = 0.4;
@@ -16,6 +16,13 @@ const BLOCKED = -2;
 
 export const isPowerNet = (name: string) =>
   /^(?:gnd|0v|vss|ground|agnd|dgnd|vcc|avcc|dvcc|vdd|vin|vbus|vsys|vm|vbat|v\+|power|pwr|[+-]?\d+(?:\.\d+)?v|3v3|5v0?)\d*$/i.test(name.trim());
+
+export function netTrackWidth(net: { name: string; width?: number }): number {
+  if (typeof net.width === 'number' && Number.isFinite(net.width) && net.width >= 0.25 && net.width <= 3.0) {
+    return net.width;
+  }
+  return isPowerNet(net.name) ? POWER_W : TRACK_W;
+}
 
 export interface RouteResult {
   tracks: Track[];
@@ -68,7 +75,8 @@ function routeOnce(project: Project, order: [string, PlacedPad, PlacedPad][]): R
   const owner = [new Int32Array(N).fill(FREE), new Int32Array(N).fill(FREE)];
   const thtPad = new Uint8Array(N);
   const netIds = new Map<string, number>();
-  project.nets.forEach((n, i) => netIds.set(n.name, i));
+  const netWidthMap = new Map<string, number>();
+  project.nets.forEach((n, i) => { netIds.set(n.name, i); netWidthMap.set(n.name, netTrackWidth(n)); });
 
   // resolvePin과 동일한 규칙으로 패드별 넷 ID 매핑 (멀티패드 핀 번호 참조·공백 포함 일관성 보장)
   const padNet = new Map<string, number>();
@@ -96,6 +104,15 @@ function routeOnce(project: Project, order: [string, PlacedPad, PlacedPad][]): R
     for (let y = Math.max(0, Math.floor((hy - r) / PITCH)); y <= Math.min(H - 1, Math.ceil((hy + r) / PITCH)); y++)
       for (let x = Math.max(0, Math.floor((hx - r) / PITCH)); x <= Math.min(W - 1, Math.ceil((hx + r) / PITCH)); x++)
         if (Math.hypot(x * PITCH - hx, y * PITCH - hy) <= r) { owner[0][y * W + x] = BLOCKED; owner[1][y * W + x] = BLOCKED; }
+  }
+
+  // 부품 구리 금지 영역 (예: ESP32 Wi-Fi 안테나 하단)
+  for (const k of keepoutRects(project)) {
+    const m = TRACK_W / 2 + CLEARANCE;
+    const x0 = Math.max(0, Math.floor((k.x1 - m) / PITCH)), x1 = Math.min(W - 1, Math.ceil((k.x2 + m) / PITCH));
+    const y0 = Math.max(0, Math.floor((k.y1 - m) / PITCH)), y1 = Math.min(H - 1, Math.ceil((k.y2 + m) / PITCH));
+    for (let y = y0; y <= y1; y++)
+      for (let x = x0; x <= x1; x++) { owner[0][y * W + x] = BLOCKED; owner[1][y * W + x] = BLOCKED; }
   }
 
   // 패드 주변 영역을 해당 넷 소유로 (다른 넷과 겹치면 금지)
@@ -143,15 +160,30 @@ function routeOnce(project: Project, order: [string, PlacedPad, PlacedPad][]): R
   const g = new Float32Array(S);
   const prev = new Int32Array(S);
 
-  const jobs: [string, PlacedPad, PlacedPad, boolean][] = order.map(([n, a, b]) => [n, a, b, isPowerNet(n)]);
+  const jobs: [string, PlacedPad, PlacedPad, number][] = order.map(([n, a, b]) => [n, a, b, netWidthMap.get(n) ?? (isPowerNet(n) ? POWER_W : TRACK_W)]);
   for (let jobIdx = 0; jobIdx < jobs.length; jobIdx++) {
-    const [netName, a, b, wide] = jobs[jobIdx];
+    const [netName, a, b, width] = jobs[jobIdx];
     const net = netIds.get(netName)!;
+    const rad = width > TRACK_W ? Math.max(1, Math.ceil((width - TRACK_W) / (2 * PITCH))) : 0;
     const ok1 = (l: number, i: number) => owner[l][i] === FREE || owner[l][i] === net;
-    // 굵은 선은 주변 칸까지 비어 있어야 함
-    const usable = wide
-      ? (l: number, i: number) => ok1(l, i) && (i % W === 0 || ok1(l, i - 1)) && (i % W === W - 1 || ok1(l, i + 1)) && (i < W || ok1(l, i - W)) && (i >= N - W || ok1(l, i + W))
-      : ok1;
+    // 굵은 선은 반경 rad 칸까지 비어 있어야 함
+    const usable = rad === 0
+      ? ok1
+      : (l: number, i: number) => {
+          if (!ok1(l, i)) return false;
+          const x = i % W, y = (i / W) | 0;
+          for (let dy = -rad; dy <= rad; dy++) {
+            const ny = y + dy;
+            if (ny < 0 || ny >= H) continue;
+            for (let dx = -rad; dx <= rad; dx++) {
+              if (Math.abs(dx) + Math.abs(dy) > rad + (rad > 1 ? 1 : 0)) continue;
+              const nx = x + dx;
+              if (nx < 0 || nx >= W) continue;
+              if (!ok1(l, ny * W + nx)) return false;
+            }
+          }
+          return true;
+        };
     const viaOk = (i: number, x: number, y: number) => {
       if (thtPad[i] || x < 1 || y < 1 || x >= W - 1 || y >= H - 1) return false;
       return (
@@ -204,9 +236,10 @@ function routeOnce(project: Project, order: [string, PlacedPad, PlacedPad][]): R
         if (cost < g[ns]) { g[ns] = cost; prev[ns] = s; heap.push(cost + h(i), ns); }
       }
     }
-    if (found < 0 && wide) {
-      // 굵게 못 가면 보통 굵기로 다시 시도
-      jobs.splice(jobIdx + 1, 0, [netName, a, b, false]);
+    if (found < 0 && width > TRACK_W) {
+      // 굵게 못 가면 한 단계 가늘게(0.8mm → 0.4mm) 다시 시도
+      const nextW = width > POWER_W ? POWER_W : TRACK_W;
+      jobs.splice(jobIdx + 1, 0, [netName, a, b, nextW]);
       continue;
     }
     if (found < 0) {
@@ -221,7 +254,6 @@ function routeOnce(project: Project, order: [string, PlacedPad, PlacedPad][]): R
       path.push({ l, i: node - l * N });
     }
     path.reverse();
-    const width = wide ? POWER_W : TRACK_W;
     let seg: [number, number][] = [[a.ax, a.ay]];
     let segLayer = path[0].l;
     const flush = (layer: number) => {
@@ -232,12 +264,18 @@ function routeOnce(project: Project, order: [string, PlacedPad, PlacedPad][]): R
       const gx = i % W, gy = (i / W) | 0;
       const px = gx * PITCH, py = gy * PITCH;
       owner[l][i] = net;
-      if (width > TRACK_W) {
-        // 굵은 전원선은 주변 칸도 점유 (행 경계 넘침 방지)
-        if (gx > 0 && owner[l][i - 1] === FREE) owner[l][i - 1] = net;
-        if (gx < W - 1 && owner[l][i + 1] === FREE) owner[l][i + 1] = net;
-        if (gy > 0 && owner[l][i - W] === FREE) owner[l][i - W] = net;
-        if (gy < H - 1 && owner[l][i + W] === FREE) owner[l][i + W] = net;
+      if (rad > 0) {
+        for (let dy = -rad; dy <= rad; dy++) {
+          const ny = gy + dy;
+          if (ny < 0 || ny >= H) continue;
+          for (let dx = -rad; dx <= rad; dx++) {
+            if (Math.abs(dx) + Math.abs(dy) > rad + (rad > 1 ? 1 : 0)) continue;
+            const nx = gx + dx;
+            if (nx < 0 || nx >= W) continue;
+            const ni = ny * W + nx;
+            if (owner[l][ni] === FREE) owner[l][ni] = net;
+          }
+        }
       }
       if (l !== segLayer) {
         flush(segLayer);
@@ -281,11 +319,12 @@ function simplify(pts: [number, number][]): [number, number][] {
 /** 모든 넷을 자동 배선. 실패가 있으면 순서를 바꿔 몇 번 재시도 */
 export function autoRoute(project: Project): RouteResult {
   let conns: [string, PlacedPad, PlacedPad][] = [];
+  const widths = new Map(project.nets.map((n) => [n.name, netTrackWidth(n)]));
   for (const net of project.nets)
     for (const [a, b] of netConnections(project.parts, net)) conns.push([net.name, a, b]);
-  // 짧은 연결부터, 전원은 나중에 (굵어서 길을 많이 막음)
+  // 짧은 연결부터, 굵은 선(전원·고전류)은 나중에
   const len = (c: [string, PlacedPad, PlacedPad]) => Math.abs(c[1].ax - c[2].ax) + Math.abs(c[1].ay - c[2].ay);
-  conns.sort((x, y) => (isPowerNet(x[0]) ? 1 : 0) - (isPowerNet(y[0]) ? 1 : 0) || len(x) - len(y));
+  conns.sort((x, y) => ((widths.get(x[0]) ?? TRACK_W) > TRACK_W ? 1 : 0) - ((widths.get(y[0]) ?? TRACK_W) > TRACK_W ? 1 : 0) || len(x) - len(y));
 
   let best: RouteResult | null = null;
   for (let attempt = 0; attempt < 4; attempt++) {

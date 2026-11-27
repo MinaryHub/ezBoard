@@ -291,7 +291,12 @@ export function extractCircuit(text: string): { display: string; circuit?: AiCir
       }));
     const nets: Net[] = raw.nets
       .filter((n: { name?: unknown; pins?: unknown }) => n && typeof n.name === 'string' && n.name.trim() && Array.isArray(n.pins))
-      .map((n: { name: string; pins: unknown[] }) => ({ name: n.name.trim(), pins: n.pins.map((x) => String(x).trim()).filter(Boolean) }));
+      .map((n: { name: string; pins: unknown[]; width?: unknown }) => {
+        const w = Number(n.width);
+        const base: Net = { name: n.name.trim(), pins: n.pins.map((x) => String(x).trim()).filter(Boolean) };
+        if (Number.isFinite(w) && w >= 0.25 && w <= 3.0) base.width = Math.round(w * 100) / 100;
+        return base;
+      });
     const bw = Number(raw.board?.width), bh = Number(raw.board?.height);
     const board = Number.isFinite(bw) && Number.isFinite(bh) && bw > 0 && bh > 0 ? { width: bw, height: bh } : undefined;
     const name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : undefined;

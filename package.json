@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "test": "node --import tsx --test tests/*.test.ts",
+    "mcp": "tsx mcp/server.ts",
     "preview": "vite preview",
     "test:engine": "tsx scripts/engine-test.ts",
     "test:stress": "tsx scripts/stress.ts",

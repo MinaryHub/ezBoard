@@ -15,6 +15,8 @@ export interface Part {
 export interface Net {
   name: string;       // GND, VCC, NET1 ...
   pins: string[];     // "R1.1", "U1.VCC" ...
+  /** 수동 지정 배선 굵기 (mm). 비우면 신호 0.4mm / 전원 0.8mm 자동 적용 */
+  width?: number;
 }
 
 export interface Track {

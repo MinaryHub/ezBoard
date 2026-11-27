@@ -1,7 +1,7 @@
 // 보드 부가 기능: GND 구리 채우기, 고정 나사 구멍.
 // 화면(PcbCanvas), 거버, 배선기, 배치, 검사가 모두 같은 값을 쓴다.
 import type { Project } from '../types';
-import type { PlacedPad } from './library';
+import { getDef, rotatePoint, type PlacedPad } from './library';
 
 /** 채우기와 다른 넷 구리 사이 간격. 손납땜에서 납이 번지지 않도록 넉넉히 */
 export const POUR_CLEAR = 0.5;
@@ -55,4 +55,35 @@ export function thermalSpokes(p: PlacedPad): [[number, number], [number, number]
     [[p.ax - rx, p.ay], [p.ax + rx, p.ay]],
     [[p.ax, p.ay - ry], [p.ax, p.ay + ry]],
   ];
+}
+
+export interface AbsKeepout {
+  ref: string;
+  reason: string;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+/** 부품의 구리 금지 영역(예: ESP32 Wi-Fi 안테나)을 보드 절대 좌표로 반환 */
+export function keepoutRects(project: Project): AbsKeepout[] {
+  const out: AbsKeepout[] = [];
+  for (const part of project.parts) {
+    const zones = getDef(part.type)?.footprint.keepout;
+    if (!zones?.length) continue;
+    for (const z of zones) {
+      const [ax, ay] = rotatePoint(z.x1, z.y1, part.rot);
+      const [bx, by] = rotatePoint(z.x2, z.y2, part.rot);
+      out.push({
+        ref: part.ref,
+        reason: z.reason,
+        x1: part.x + Math.min(ax, bx),
+        y1: part.y + Math.min(ay, by),
+        x2: part.x + Math.max(ax, bx),
+        y2: part.y + Math.max(ay, by),
+      });
+    }
+  }
+  return out;
 }
